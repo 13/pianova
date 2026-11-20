@@ -138,3 +138,46 @@ describe('starsFor', () => {
     expect(starsFor(0.69, 0.7)).toBe(0)
   })
 })
+
+describe('Judge, held notes', () => {
+  const long = (pitch: number, time: number, minHold: number): JudgeNote => ({ pitch, time, hand: 'R', minHold })
+  it('halves a long note let go of too soon', () => {
+    const j = new Judge([long(60, 1, 1.4)], 'timed')
+    j.press(60, 1)
+    expect(j.release(60, 1.5)).toBe(0)
+    expect(j.summary()).toMatchObject({ perfect: 1, short: 1, accuracy: 0.5 })
+  })
+  it('accepts a long note held long enough', () => {
+    const j = new Judge([long(60, 1, 1.4)], 'timed')
+    j.press(60, 1)
+    expect(j.release(60, 2.4)).toBeNull()
+    expect(j.summary()).toMatchObject({ short: 0, accuracy: 1 })
+  })
+  it('ignores releases of keys that hit nothing, and short notes', () => {
+    const j = new Judge([n(60, 1)], 'timed')
+    expect(j.release(61, 1)).toBeNull()
+    j.press(60, 1)
+    expect(j.release(60, 1.01)).toBeNull()
+  })
+})
+
+describe('Judge, accuracy so far', () => {
+  it('scores only what has been judged, by the same rules as the final score', () => {
+    const chord = [n(60, 1), n(64, 1), n(67, 1), n(62, 2)]
+    const j = new Judge(chord, 'timed')
+    j.press(60, 1)
+    j.press(64, 1.1)
+    j.press(67, 1)
+    // The chord counts as its weakest note (good): 3 × 0.7 over 3 judged notes.
+    expect(j.summary().soFar).toBeCloseTo(0.7)
+    j.press(62, 2)
+    const s = j.summary()
+    expect(s.soFar).toBe(s.accuracy)
+  })
+  it('counts wrong presses against it', () => {
+    const j = new Judge(four(), 'timed')
+    j.press(60, 1)
+    j.press(70, 1.5)
+    expect(j.summary().soFar).toBe(0.5)
+  })
+})

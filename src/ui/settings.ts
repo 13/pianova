@@ -58,7 +58,7 @@ export function settingsView(app: App): View {
     class: 'btn',
     onclick: () => {
       calibrate.disabled = true
-      const start = synth.now() + 0.4
+      const start = synth.now() + synth.lead + 0.3
       const clicks = Array.from({ length: CLICKS }, (_, i) => start + i * INTERVAL_S)
       clicks.forEach((t, i) => synth.click(i % 4 === 0, t))
       const taps: number[] = []

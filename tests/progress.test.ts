@@ -63,6 +63,12 @@ describe('ProgressStore', () => {
     expect(p.settings.volume).toBe(0.8)
     expect(p.stats()).toEqual([])
   })
+  it('resets a version 1 timing offset, which also covered output delay, and keeps the rest', () => {
+    const old = { version: 1, lessons: { a: { stars: 2, best: 0.9 } }, settings: { latencyMs: 60, volume: 0.5, labels: false, midiInputId: 'x' } }
+    const p = new ProgressStore(fakeKV({ [STORAGE_KEY]: JSON.stringify(old) }), ids)
+    expect(p.settings).toEqual({ latencyMs: 0, volume: 0.5, labels: false, midiInputId: 'x' })
+    expect(p.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
+  })
   it('works in memory when storage is missing or refuses writes', () => {
     const none = new ProgressStore(null, ids)
     none.recordLesson('a', 1, 3)

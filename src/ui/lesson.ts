@@ -6,7 +6,7 @@ import { Highway } from '../render/highway'
 import type { App } from './app'
 import { h, icon, type View } from './dom'
 import { midiPill } from './midiPill'
-import { PlayView, type PlayResult } from './play'
+import { PlayView, type PlayResult, type Practice } from './play'
 import { resultsCard } from './results'
 
 const STEP_NAMES: Record<Step['type'], string> = { explain: 'Learn', demo: 'Watch', drill: 'Practise', perform: 'Perform' }
@@ -57,13 +57,22 @@ export class LessonView implements View {
     this.body.replaceChildren(view.el)
   }
 
-  private go(index: number, slow = false): void {
+  private go(index: number, slow = false, practice?: Practice): void {
     this.index = index
     const step = this.lesson.steps[index]
+    // Once a lesson is passed, any step can be jumped to (say, straight to the scored run).
+    const passed = (this.app.progress.lessonResult(this.lesson.id)?.stars ?? 0) > 0
+    this.dots.classList.toggle('jump', passed)
     this.dots.replaceChildren(
-      ...this.lesson.steps.map((s, i) =>
-        h('li', { class: i === index ? 'current' : i < index ? 'done' : '', 'aria-current': i === index ? 'step' : undefined }, STEP_NAMES[s.type]),
-      ),
+      ...this.lesson.steps.map((s, i) => {
+        const cls = i === index ? 'current' : i < index ? 'done' : ''
+        const name = STEP_NAMES[s.type]
+        return h(
+          'li',
+          { class: cls, 'aria-current': i === index ? 'step' : undefined },
+          passed && i !== index ? h('button', { class: 'step-jump', title: `Go to: ${s.title}`, onclick: () => this.go(i) }, name) : name,
+        )
+      }),
     )
     const next = () => this.go(index + 1)
     // Lessons that end in a timed run get a metronome in the demo too, so the beat is heard first.
@@ -79,6 +88,7 @@ export class LessonView implements View {
         mode: step.type === 'demo' ? 'demo' : step.type === 'drill' || step.judging === 'pitch' ? 'wait' : 'timed',
         hands: step.type === 'demo' ? undefined : step.hands,
         tempoScale: slow ? SLOW_TEMPO : 1,
+        practice: step.type === 'drill' ? practice : undefined,
         tools: step.type === 'drill',
         metronome: timedLesson,
         scored: step.type === 'perform',
@@ -101,10 +111,11 @@ export class LessonView implements View {
     } else if (step.type === 'drill') {
       this.mount(
         play({
-          onFinish: () =>
+          onFinish: (result) =>
             this.between('That is the idea', 'Run it again as often as you like. When it feels comfortable, play it for a score.', [
               { label: 'Play for a score', primary: true, onclick: next },
-              { label: 'Practise again', onclick: () => this.go(index) },
+              // Same tempo, hands and loop as the run just played.
+              { label: 'Practise again', onclick: () => this.go(index, false, result.practice) },
             ]),
         }),
       )

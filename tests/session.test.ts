@@ -118,9 +118,24 @@ describe('Session, timed', () => {
     s.press(64, 3)
     expect(s.beat).toBeCloseTo(0.5)
     s.resume(10)
-    run(s, 10, 10.5)
+    // A bar of clicks counts the player back in before the music moves on.
+    expect(s.resumeCount(10)).toBeCloseTo(4)
+    run(s, 10, 13.95)
+    expect(s.beat).toBeCloseTo(0.5)
+    s.press(64, 12)
+    run(s, 14, 14.5)
     expect(s.beat).toBeCloseTo(1)
+    expect(s.resumeCount(14.5)).toBe(0)
     expect(s.summary().wrong).toBe(0)
+  })
+  it('clicks a bar after a resume, accent first', () => {
+    const { s, log } = make({ chart: melody, mode: 'timed' })
+    s.start(0)
+    run(s, 0, 0.5)
+    s.pause(0.5)
+    log.length = 0
+    s.resume(1)
+    expect(log).toEqual(['CLICK', 'click', 'click', 'click'])
   })
   it('loops a bar range instead of finishing', () => {
     const { s, log } = make({ chart: twoBars, mode: 'timed', loop: { fromBar: 2, toBar: 2 } })
@@ -143,6 +158,103 @@ describe('Session, timed', () => {
     b.start(0)
     expect(b.beat).toBe(0)
     expect(b.summary().total).toBe(8)
+  })
+})
+
+describe('Session, scheduling ahead', () => {
+  function timed(opts: Partial<SessionOptions> & Pick<SessionOptions, 'chart' | 'mode'>) {
+    const log: string[] = []
+    const s = new Session(
+      { hands: ['L', 'R'], ...opts },
+      {
+        autoNote: (p, on, _h, at) => log.push(`${on ? 'on' : 'off'}${p}@${at.toFixed(2)}`),
+        click: (accent, at) => log.push(`${accent ? 'CLICK' : 'click'}@${at.toFixed(2)}`),
+        cancel: (at) => log.push(`cancel@${at.toFixed(2)}`),
+      },
+    )
+    return { s, log }
+  }
+  /** 50 ms frames with a lead time. */
+  const go = (s: Session, from: number, to: number, lead: number) => {
+    for (let t = from; t <= to + 1e-9; t += 0.05) s.update(Math.round(t * 100) / 100, lead)
+  }
+  it('emits sounds early, stamped with the exact time they are due', () => {
+    const { s, log } = timed({ chart: twoHands, mode: 'demo', metronome: true })
+    s.start(0)
+    log.length = 0
+    go(s, 0.05, 0.8, 0.2)
+    expect(log).toEqual(['CLICK@0.05', 'on48@0.05', 'on64@0.05', 'click@1.00', 'on67@1.00'])
+  })
+  it('never emits a release early', () => {
+    const { s, log } = timed({ chart: twoHands, mode: 'demo' })
+    s.start(0)
+    go(s, 0.05, 0.9, 0.5)
+    expect(log.some((l) => l.startsWith('off'))).toBe(false)
+    go(s, 0.95, 0.95, 0.5)
+    expect(log).toContain('off64@0.95')
+  })
+  it('takes back scheduled sounds on pause and emits them again after resuming', () => {
+    const { s, log } = timed({ chart: twoHands, mode: 'demo', metronome: true })
+    s.start(0)
+    go(s, 0.05, 0.85, 0.2)
+    expect(log).toContain('on67@1.00')
+    s.pause(0.85)
+    expect(log).toContain('cancel@0.85')
+    log.length = 0
+    s.resume(5)
+    go(s, 5, 5.05, 0.2)
+    expect(log).toContain('on67@5.15')
+    expect(log).toContain('click@5.15')
+  })
+  it('does not schedule past the note a wait is holding for', () => {
+    const chart = compileChart({ id: 'w', title: 'W', bpm: 60, R: 'C4 D4', L: 'C3 D3' })
+    const { s, log } = timed({ chart, mode: 'wait', hands: ['R'] })
+    s.start(0)
+    go(s, 0.05, 0.5, 3)
+    expect(log.filter((l) => l.startsWith('on'))).toEqual(['on48@0.05'])
+  })
+  it('reschedules when an early press pulls the music forward', () => {
+    const chart = compileChart({ id: 'w', title: 'W', bpm: 60, R: 'C4:2 D4:2', L: 'C3 E3 D3 F3' })
+    const { s, log } = timed({ chart, mode: 'wait', hands: ['R'] })
+    s.start(0)
+    s.press(60, 0)
+    go(s, 0.05, 0.5, 1)
+    expect(log).toContain('on52@1.00')
+    s.press(62, 0.5)
+    expect(log).toContain('cancel@0.50')
+    go(s, 0.55, 0.55, 1)
+    // E3 was due before the jump, so it sounds right away; D3 and F3 land on the new timeline.
+    expect(log.filter((l) => l.startsWith('on')).slice(-3)).toEqual(['on52@0.55', 'on50@0.55', 'on53@1.50'])
+  })
+})
+
+describe('Session, long notes', () => {
+  const long = compileChart({ id: 'l', title: 'L', bpm: 60, R: 'C4:4 D4' })
+  it('marks a long note let go of too soon', () => {
+    const cuts: number[] = []
+    const s = new Session({ chart: long, mode: 'timed', hands: ['R'] }, { short: (i) => cuts.push(i) })
+    s.start(0)
+    s.press(60, 0)
+    run(s, 0, 1)
+    s.release(60, 1)
+    expect(cuts).toEqual([0])
+    expect(s.cut[0]).toBe(true)
+    expect(s.summary().short).toBe(1)
+  })
+  it('accepts a long note held for most of its length', () => {
+    const s = new Session({ chart: long, mode: 'timed', hands: ['R'] })
+    s.start(0)
+    s.press(60, 0)
+    run(s, 0, 3)
+    s.release(60, 3)
+    expect(s.summary().short).toBe(0)
+  })
+  it('does not ask for holding in wait mode', () => {
+    const s = new Session({ chart: long, mode: 'wait', hands: ['R'] })
+    s.start(0)
+    s.press(60, 0)
+    s.release(60, 0.1)
+    expect(s.summary().short).toBe(0)
   })
 })
 

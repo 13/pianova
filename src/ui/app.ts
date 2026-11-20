@@ -1,9 +1,12 @@
 import { Synth } from '../audio/synth'
 import { LESSONS, type Lesson } from '../curriculum'
 import { InputHub } from '../input/hub'
+import { loadKeyboardLayout } from '../input/keyboard'
 import { ProgressStore, type KV } from '../progress/store'
 import { h, icon, type View } from './dom'
-import { freePlayView } from './freeplay'
+import { midiToName } from '../core/pitch'
+import { weakNotes, weakSpotChart } from '../practice/weakSpots'
+import { freePlayView, playChart } from './freeplay'
 import { LessonView } from './lesson'
 import { pathView } from './path'
 import { settingsView } from './settings'
@@ -39,6 +42,23 @@ export class App {
     this.show(freePlayView(this))
   }
 
+  /** A short exercise on the notes missed most lately (does nothing until there are some). */
+  goPractice(): void {
+    const weak = weakNotes(this.progress.stats())
+    const chart = weakSpotChart(weak)
+    if (!chart) return
+    this.show(
+      playChart(this, chart, {
+        saveAs: null,
+        label: `Practice • ${weak.map((w) => midiToName(w.pitch)).join(', ')}`,
+        unsaved: 'Practice scores are not saved, but every note you play updates your weak spots.',
+        backLabel: 'Lessons',
+        back: () => this.goPath(),
+        another: 'Back to lessons',
+      }),
+    )
+  }
+
   goSettings(): void {
     this.show(settingsView(this))
   }
@@ -59,6 +79,7 @@ export class App {
       this.input.onSustain((down) => this.synth.setSustain(down))
       await this.synth.resume()
       void this.input.init(this.progress.settings.midiInputId)
+      void loadKeyboardLayout()
       this.goPath()
     }
     return {

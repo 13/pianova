@@ -34,6 +34,8 @@ export function resultsCard(o: ResultsOptions): HTMLElement {
     else if (s.meanOffsetMs > 0) tips.push(`You tend to play a little late (about ${ms} ms). Try to press just as the note touches the line.`)
     else tips.push(`You tend to play a little early (about ${ms} ms). Let the note reach the line before you press.`)
   }
+  if (s.short > 0)
+    tips.push(`You let go of ${s.short === 1 ? 'one long note' : `${s.short} long notes`} too soon. Keep the key down until the tail of the note has gone.`)
   if (missed.length) tips.push(`Notes to watch: ${missed.join(', ')}.`)
   if (s.wrong > 0 && !missed.length) tips.push('The only slips were extra key presses. Keep your fingers resting lightly on their keys.')
 

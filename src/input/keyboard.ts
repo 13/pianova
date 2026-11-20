@@ -14,10 +14,30 @@ export function pitchForCode(code: string, octaveShift: number): number | null {
   return pitch >= 21 && pitch <= 108 ? pitch : null
 }
 
+/** What each key is printed with on this keyboard, when the browser can tell (QWERTZ, AZERTY…). */
+let printed = new Map<string, string>()
+let layoutVersion = 0
+
+/** Bumps whenever key labels change, so cached drawings know to redraw. */
+export const keyLabelsVersion = (): number => layoutVersion
+
+/** Asks the browser for the keyboard layout (Chromium only); QWERTY labels are kept otherwise. */
+export async function loadKeyboardLayout(): Promise<void> {
+  const keyboard = (navigator as Navigator & { keyboard?: { getLayoutMap?(): Promise<Map<string, string>> } }).keyboard
+  try {
+    const map = await keyboard?.getLayoutMap?.()
+    if (!map) return
+    printed = new Map(CODES.flatMap((code) => (map.get(code) ? [[code, map.get(code)!.toUpperCase()]] : [])))
+    layoutVersion++
+  } catch {
+    /* not allowed here (e.g. in a frame): keep QWERTY labels */
+  }
+}
+
 /** The computer key that plays a pitch at the given octave shift, as a short label ('Z', '2'), if any. */
 export function labelForPitch(pitch: number, octaveShift: number): string | null {
   const code = CODES[pitch - BASE - octaveShift * 12]
-  return code ? code.replace(/^Key|^Digit/, '') : null
+  return code ? (printed.get(code) ?? code.replace(/^Key|^Digit/, '')) : null
 }
 
 export type NoteCallback = (pitch: number, on: boolean, perfTime: number, velocity: number) => void

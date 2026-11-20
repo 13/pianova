@@ -149,7 +149,11 @@ Around 4 lessons per unit. Each lesson introduces one new thing.
   perfect ±50 ms, good ±120 ms, otherwise miss. Wrong keys count as errors but
   do not consume a note.
 - Chords: all notes must land within the window to count.
-- Note release/duration is shown but not scored in v1.
+- Long notes (1.5 beats or more) must be held for 70% of their length in timed
+  runs; letting go sooner caps that note at half credit and fades its tail.
+- Sounds are scheduled ahead on the audio clock, and the highway and judging run
+  on the time actually being heard (output delay included), so the latency
+  offset only covers input delay.
 - Accuracy = weighted hits / (total notes + wrong key presses), with perfect
   1.0 and good 0.7. In `pitch` mode every correct note counts 1.0. Wrong
   presses therefore lower the score without ever ending the run.

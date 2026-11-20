@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chartFromMidiJson, type MidiJson } from '../src/chart/midiImport'
+import { chartFromMidiJson, describeTracks, type MidiJson } from '../src/chart/midiImport'
 
 const note = (midi: number, ticks: number, durationTicks = 480) => ({ midi, ticks, durationTicks })
 const file = (tracks: ReturnType<typeof note>[][], header: Partial<MidiJson['header']> = {}): MidiJson => ({
@@ -23,6 +23,37 @@ describe('chartFromMidiJson', () => {
       [48, 'R'],
       [72, 'L'],
     ])
+  })
+  it('leaves out drum tracks', () => {
+    const midi = file([[note(60, 0)], [note(38, 0)], [note(48, 0)]])
+    midi.tracks[1].channel = 9
+    const c = chartFromMidiJson(midi, 't')
+    expect(c.notes.map((n) => [n.pitch, n.hand])).toEqual([
+      [48, 'L'],
+      [60, 'R'],
+    ])
+    expect(describeTracks(midi).map((t) => [t.instrument, t.role])).toEqual([
+      ['Piano', 'R'],
+      ['Drums', 'off'],
+      ['Piano', 'L'],
+    ])
+  })
+  it('in a band arrangement, plays only the piano tracks', () => {
+    const midi = file([[note(72, 0)], [note(40, 0)], [note(64, 0)]])
+    midi.tracks[0].instrument = { name: 'acoustic grand piano', family: 'piano' }
+    midi.tracks[1].instrument = { name: 'electric bass (finger)', family: 'bass' }
+    midi.tracks[2].instrument = { name: 'string ensemble 1', family: 'strings' }
+    expect(describeTracks(midi).map((t) => t.role)).toEqual(['split', 'off', 'off'])
+    expect(chartFromMidiJson(midi, 't').notes.map((n) => n.pitch)).toEqual([72])
+  })
+  it('follows the roles it is given', () => {
+    const midi = file([[note(72, 0)], [note(40, 0)], [note(64, 0)]])
+    const c = chartFromMidiJson(midi, 't', { 0: 'L', 1: 'off', 2: 'R' })
+    expect(c.notes.map((n) => [n.pitch, n.hand])).toEqual([
+      [64, 'R'],
+      [72, 'L'],
+    ])
+    expect(() => chartFromMidiJson(midi, 't', { 0: 'off', 1: 'off', 2: 'off' })).toThrow('No notes found')
   })
   it('splits a single track (or three or more) at middle C', () => {
     const one = chartFromMidiJson(file([[note(59, 0), note(60, 0)]]), 't')

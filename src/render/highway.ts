@@ -1,6 +1,6 @@
 import { isBlack, midiToLetter } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
-import { labelForPitch } from '../input/keyboard'
+import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
 
 export const COLORS = {
@@ -42,6 +42,8 @@ export interface Frame {
   beat: number
   chart?: Chart
   noteState?: ('pending' | Grade)[]
+  /** Per note: let go of too soon (the rest of it is drawn faded). */
+  cut?: boolean[]
   /** Per note: true if the player plays it (false = auto-played, drawn fainter). */
   active?: boolean[]
   /** Keys to mark as "play this" (explanations, and the note being waited for). */
@@ -63,6 +65,8 @@ export class Highway {
   private lastSustainSpark = 0
   private w = 0
   private h = 0
+  private dpr = 1
+  private cache: { key: string; white: HTMLCanvasElement; black: HTMLCanvasElement } | null = null
   private observer: ResizeObserver
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -110,7 +114,7 @@ export class Highway {
   }
 
   resize(): void {
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    const dpr = (this.dpr = Math.min(2, window.devicePixelRatio || 1))
     this.w = this.canvas.clientWidth
     this.h = this.canvas.clientHeight
     this.canvas.width = Math.max(1, Math.round(this.w * dpr))
@@ -225,8 +229,9 @@ export class Highway {
       const state = frame.noteState?.[i] ?? 'pending'
       const active = frame.active?.[i] ?? true
       const hit = state === 'perfect' || state === 'good'
+      const cut = !!frame.cut?.[i]
       // Being played right now: by the player (hit) or by the app (auto-played).
-      const sounding = ahead <= 0 && (hit || !active || !frame.active)
+      const sounding = ahead <= 0 && !cut && (hit || !active || !frame.active)
 
       // The note is swallowed by the line as it is played.
       const near = this.depth(Math.max(0, ahead))
@@ -240,7 +245,7 @@ export class Highway {
 
       const color = state === 'miss' ? COLORS.miss : COLORS[n.hand]
       const fade = Math.min(1, far * 7 + 0.2)
-      g.globalAlpha = (state === 'miss' ? 0.45 : active ? 1 : 0.5) * fade
+      g.globalAlpha = (state === 'miss' ? 0.45 : cut ? 0.3 : active ? 1 : 0.5) * fade
 
       // Glass: translucent body, brighter towards the player, lit rim.
       const body = g.createLinearGradient(0, a.y, 0, d.y)
@@ -322,21 +327,84 @@ export class Highway {
 
   private drawKeyboard(frame: Frame): void {
     const g = this.g
-    const { whiteW, keyH, hitY } = this.layout
+    const { keyH, hitY } = this.layout
     const hintColor = (pitch: number): string | null => {
       const mark = frame.highlight?.get(pitch)
       return mark ? (mark === 'hint' ? COLORS.hint : COLORS[mark]) : null
     }
+    const { white, black } = this.keyboardCache()
 
-    // ---- white keys ----
+    // The keys at rest come from the cache; only lit and marked keys are drawn each frame.
+    g.drawImage(white, 0, hitY, this.w, keyH)
     for (let p = this.lo; p <= this.hi; p++) {
       if (isBlack(p)) continue
-      const k = this.key(p)
-      const x0 = k.x - k.width / 2
-      const x1 = k.x + k.width / 2
       const lit = this.litColor(p, frame)
       const hint = hintColor(p)
+      if (lit || hint) this.paintWhite(p, lit, hint)
+    }
+    g.drawImage(black, 0, hitY, this.w, keyH)
+    for (let p = this.lo; p <= this.hi; p++) {
+      if (!isBlack(p)) continue
+      const lit = this.litColor(p, frame)
+      const hint = hintColor(p)
+      if (lit || hint) this.paintBlack(p, lit, hint)
+    }
+  }
 
+  /** Offscreen drawings of the white and black keys at rest, redrawn only when they would change. */
+  private keyboardCache(): { white: HTMLCanvasElement; black: HTMLCanvasElement } {
+    const { keyH, hitY } = this.layout
+    const key = [this.w, this.h, this.dpr, this.lo, this.hi, this.labels, this.keyHints, this.hintShift, keyLabelsVersion()].join('|')
+    if (this.cache?.key === key) return this.cache
+    const layer = (paint: () => void) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(this.w * this.dpr))
+      canvas.height = Math.max(1, Math.round(keyH * this.dpr))
+      const main = this.g
+      this.g = canvas.getContext('2d')!
+      this.g.setTransform(this.dpr, 0, 0, this.dpr, 0, -hitY * this.dpr)
+      paint()
+      this.g = main
+      return canvas
+    }
+    const white = layer(() => {
+      for (let p = this.lo; p <= this.hi; p++) if (!isBlack(p)) this.paintWhite(p, null, null)
+    })
+    const black = layer(() => {
+      for (let p = this.lo; p <= this.hi; p++) if (isBlack(p)) this.paintBlack(p, null, null)
+    })
+    this.cache = { key, white, black }
+    return this.cache
+  }
+
+  /** One white key: ivory, or lit by a press, or washed with a "play this" colour. */
+  private paintWhite(p: number, lit: string | null, hint: string | null): void {
+    const g = this.g
+    const { whiteW, keyH, hitY } = this.layout
+    const k = this.key(p)
+    const x0 = k.x - k.width / 2
+    const x1 = k.x + k.width / 2
+
+    if (lit) {
+      const glow = g.createLinearGradient(0, hitY, 0, hitY + keyH)
+      glow.addColorStop(0, rgba(lit, 0.75))
+      glow.addColorStop(0.75, rgba(lighten(lit, 0.35), 0.95))
+      glow.addColorStop(1, rgba(lit, 0.9))
+      g.fillStyle = glow
+      g.shadowColor = lit
+      g.shadowBlur = 26
+      this.quad(x0, x1, 0, 1)
+      g.fill()
+      g.shadowBlur = 0
+    } else if (hint) {
+      // "Play this next": a wash of colour, clearly softer than a lit key.
+      const wash = g.createLinearGradient(0, hitY, 0, hitY + keyH)
+      wash.addColorStop(0, rgba(hint, 0.6))
+      wash.addColorStop(1, rgba(hint, 0.25))
+      g.fillStyle = wash
+      this.quad(x0, x1, 0, 1)
+      g.fill()
+    } else {
       const ivory = g.createLinearGradient(0, hitY, 0, hitY + keyH)
       ivory.addColorStop(0, '#cfcbc2')
       ivory.addColorStop(0.12, '#f1ede4')
@@ -345,119 +413,103 @@ export class Highway {
       g.fillStyle = ivory
       this.quad(x0, x1, 0, 1)
       g.fill()
+    }
 
-      if (lit) {
-        const glow = g.createLinearGradient(0, hitY, 0, hitY + keyH)
-        glow.addColorStop(0, rgba(lit, 0.75))
-        glow.addColorStop(0.75, rgba(lighten(lit, 0.35), 0.95))
-        glow.addColorStop(1, rgba(lit, 0.9))
-        g.fillStyle = glow
-        g.shadowColor = lit
-        g.shadowBlur = 26
-        this.quad(x0, x1, 0, 1)
-        g.fill()
-        g.shadowBlur = 0
-      } else if (hint) {
-        // "Play this next": a wash of colour, clearly softer than a lit key.
-        const wash = g.createLinearGradient(0, hitY, 0, hitY + keyH)
-        wash.addColorStop(0, rgba(hint, 0.6))
-        wash.addColorStop(1, rgba(hint, 0.25))
-        g.fillStyle = wash
-        this.quad(x0, x1, 0, 1)
-        g.fill()
-      }
-
-      // The seam between this key and the next.
-      const top = this.onKeys(x1, 0)
-      const bottom = this.onKeys(x1, 1)
-      g.strokeStyle = 'rgba(40, 36, 30, 0.6)'
-      g.lineWidth = 1.2
+    // The seams either side of this key.
+    g.strokeStyle = 'rgba(40, 36, 30, 0.6)'
+    g.lineWidth = 1.2
+    for (const x of [x0, x1]) {
+      const top = this.onKeys(x, 0)
+      const bottom = this.onKeys(x, 1)
       g.beginPath()
       g.moveTo(top.x, top.y)
       g.lineTo(bottom.x, bottom.y)
       g.stroke()
-
-      const isC = p % 12 === 0
-      const at = this.onKeys(k.x, 0.86)
-      g.textAlign = 'center'
-      g.textBaseline = 'alphabetic'
-      if (isC || (this.labels && whiteW >= 30)) {
-        g.fillStyle = lit ? 'rgba(10, 20, 40, 0.7)' : isC ? 'rgba(70, 66, 60, 0.85)' : 'rgba(70, 66, 60, 0.42)'
-        g.font = `${isC ? 'italic 600' : '500'} ${Math.min(isC ? 19 : 14, whiteW * 0.34)}px ${FONT}`
-        g.fillText(midiToLetter(p) + (isC ? String(Math.floor(p / 12) - 1) : ''), at.x, at.y)
-      }
-      const keyHint = this.keyHints ? labelForPitch(p, this.hintShift) : null
-      if (keyHint && whiteW >= 30) {
-        const up = this.onKeys(k.x, 0.7)
-        g.fillStyle = 'rgba(70, 66, 60, 0.5)'
-        g.font = `700 ${Math.min(12, whiteW * 0.22)}px ${FONT}`
-        g.fillText(keyHint, up.x, up.y)
-      }
     }
 
-    // Shade where the keys run back under the line.
+    const isC = p % 12 === 0
+    const at = this.onKeys(k.x, 0.86)
+    g.textAlign = 'center'
+    g.textBaseline = 'alphabetic'
+    if (isC || (this.labels && whiteW >= 30)) {
+      g.fillStyle = lit ? 'rgba(10, 20, 40, 0.7)' : isC ? 'rgba(70, 66, 60, 0.85)' : 'rgba(70, 66, 60, 0.42)'
+      g.font = `${isC ? 'italic 600' : '500'} ${Math.min(isC ? 19 : 14, whiteW * 0.34)}px ${FONT}`
+      g.fillText(midiToLetter(p) + (isC ? String(Math.floor(p / 12) - 1) : ''), at.x, at.y)
+    }
+    const keyHint = this.keyHints ? labelForPitch(p, this.hintShift) : null
+    if (keyHint && whiteW >= 30) {
+      const up = this.onKeys(k.x, 0.7)
+      g.fillStyle = 'rgba(70, 66, 60, 0.5)'
+      g.font = `700 ${Math.min(12, whiteW * 0.22)}px ${FONT}`
+      g.fillText(keyHint, up.x, up.y)
+    }
+
+    // Shade where the key runs back under the line.
     const back = g.createLinearGradient(0, hitY, 0, hitY + keyH * 0.14)
     back.addColorStop(0, 'rgba(8, 10, 26, 0.5)')
     back.addColorStop(1, 'rgba(8, 10, 26, 0)')
     g.fillStyle = back
-    g.fillRect(0, hitY, this.w, keyH * 0.14)
+    this.quad(x0, x1, 0, 0.14)
+    g.fill()
+  }
 
-    // ---- black keys ----
-    for (let p = this.lo; p <= this.hi; p++) {
-      if (!isBlack(p)) continue
-      const k = this.key(p)
-      const x0 = k.x - k.width / 2
-      const x1 = k.x + k.width / 2
-      const lit = this.litColor(p, frame)
-      const hint = hintColor(p)
+  /** One black key: body, a top face (lit, marked, or at rest), and its computer-key label. */
+  private paintBlack(p: number, lit: string | null, hint: string | null): void {
+    const g = this.g
+    const { whiteW, keyH, hitY } = this.layout
+    const k = this.key(p)
+    const x0 = k.x - k.width / 2
+    const x1 = k.x + k.width / 2
 
-      // Drop shadow onto the white keys, then the body (sides and front face).
+    // Drop shadow onto the white keys, then the body (sides and front face).
+    if (!lit && !hint) {
       g.fillStyle = 'rgba(0, 0, 0, 0.2)'
       this.quad(x0 + k.width * 0.1, x1 + k.width * 0.14, 0, BLACK_LENGTH + 0.02)
       g.fill()
-      g.fillStyle = '#08080b'
-      this.quad(x0, x1, 0, BLACK_LENGTH)
-      g.fill()
+    }
+    g.fillStyle = '#08080b'
+    this.quad(x0, x1, 0, BLACK_LENGTH)
+    g.fill()
 
-      // The top face sits inset and stops short, leaving a front face that reads as height.
-      const inset = k.width * 0.13
-      const face = g.createLinearGradient(0, hitY, 0, hitY + keyH * BLACK_LENGTH)
-      const color = lit ?? hint
-      if (color) {
-        face.addColorStop(0, rgba(color, lit ? 0.75 : 0.7))
-        face.addColorStop(1, rgba(lighten(color, 0.3), lit ? 1 : 0.9))
-        if (lit) {
-          g.shadowColor = color
-          g.shadowBlur = 22
-        }
-      } else {
-        face.addColorStop(0, '#1b1b21')
-        face.addColorStop(0.7, '#34343c')
-        face.addColorStop(1, '#4a4a54')
+    // The top face sits inset and stops short, leaving a front face that reads as height.
+    const inset = k.width * 0.13
+    const face = g.createLinearGradient(0, hitY, 0, hitY + keyH * BLACK_LENGTH)
+    const color = lit ?? hint
+    if (color) {
+      face.addColorStop(0, rgba(color, lit ? 0.75 : 0.7))
+      face.addColorStop(1, rgba(lighten(color, 0.3), lit ? 1 : 0.9))
+      if (lit) {
+        g.shadowColor = color
+        g.shadowBlur = 22
       }
-      g.fillStyle = face
-      this.quad(x0 + inset, x1 - inset, 0, BLACK_LENGTH * 0.87)
-      g.fill()
-      g.shadowBlur = 0
+    } else {
+      face.addColorStop(0, '#1b1b21')
+      face.addColorStop(0.7, '#34343c')
+      face.addColorStop(1, '#4a4a54')
+    }
+    g.fillStyle = face
+    this.quad(x0 + inset, x1 - inset, 0, BLACK_LENGTH * 0.87)
+    g.fill()
+    g.shadowBlur = 0
 
-      // A sliver of light along the left edge of the top face.
-      const hiTop = this.onKeys(x0 + inset, 0.02)
-      const hiBottom = this.onKeys(x0 + inset, BLACK_LENGTH * 0.86)
-      g.strokeStyle = 'rgba(255, 255, 255, 0.16)'
-      g.lineWidth = 1
-      g.beginPath()
-      g.moveTo(hiTop.x, hiTop.y)
-      g.lineTo(hiBottom.x, hiBottom.y)
-      g.stroke()
+    // A sliver of light along the left edge of the top face.
+    const hiTop = this.onKeys(x0 + inset, 0.02)
+    const hiBottom = this.onKeys(x0 + inset, BLACK_LENGTH * 0.86)
+    g.strokeStyle = 'rgba(255, 255, 255, 0.16)'
+    g.lineWidth = 1
+    g.beginPath()
+    g.moveTo(hiTop.x, hiTop.y)
+    g.lineTo(hiBottom.x, hiBottom.y)
+    g.stroke()
 
-      const keyHint = this.keyHints ? labelForPitch(p, this.hintShift) : null
-      if (keyHint && whiteW >= 30) {
-        const at = this.onKeys(k.x, BLACK_LENGTH * 0.72)
-        g.fillStyle = color ? 'rgba(10, 20, 40, 0.8)' : 'rgba(255, 255, 255, 0.5)'
-        g.font = `700 ${Math.min(11, whiteW * 0.2)}px ${FONT}`
-        g.textAlign = 'center'
-        g.fillText(keyHint, at.x, at.y)
-      }
+    const keyHint = this.keyHints ? labelForPitch(p, this.hintShift) : null
+    if (keyHint && whiteW >= 30) {
+      const at = this.onKeys(k.x, BLACK_LENGTH * 0.72)
+      g.fillStyle = color ? 'rgba(10, 20, 40, 0.8)' : 'rgba(255, 255, 255, 0.5)'
+      g.font = `700 ${Math.min(11, whiteW * 0.2)}px ${FONT}`
+      g.textAlign = 'center'
+      g.textBaseline = 'alphabetic'
+      g.fillText(keyHint, at.x, at.y)
     }
   }
 

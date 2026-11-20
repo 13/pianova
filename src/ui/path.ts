@@ -1,11 +1,14 @@
 import { LESSONS, UNITS } from '../curriculum'
+import { midiToName } from '../core/pitch'
 import type { MidiStatus } from '../input/hub'
+import { weakNotes } from '../practice/weakSpots'
 import type { App } from './app'
 import { h, icon, stars, type View } from './dom'
 
 /** Home: the six units as a path of lessons. */
 export function pathView(app: App): View {
   const next = LESSONS.find((l) => app.progress.isUnlocked(l.id) && !(app.progress.lessonResult(l.id)?.stars ?? 0))
+  const weak = weakNotes(app.progress.stats())
   const earned = LESSONS.reduce((sum, l) => sum + (app.progress.lessonResult(l.id)?.stars ?? 0), 0)
 
   const pill = h('span', { class: 'pill' })
@@ -97,9 +100,24 @@ export function pathView(app: App): View {
         h('div', { class: 'hero-side' }, h('span', { class: 'star-total' }, h('span', { class: 'star lit' }, '★'), `${earned} / ${LESSONS.length * 3}`),
           next
             ? h('button', { class: 'btn primary large', onclick: () => app.goLesson(next) }, earned ? 'Continue' : 'Begin')
-            : h('button', { class: 'btn primary large', onclick: () => app.goFreePlay() }, 'Free play'),
+            : weak.length
+              ? h('button', { class: 'btn primary large', onclick: () => app.goPractice() }, 'Practise')
+              : h('button', { class: 'btn primary large', onclick: () => app.goFreePlay() }, 'Free play'),
         ),
       ),
+      weak.length > 0 &&
+        h(
+          'section',
+          { class: 'practice-card' },
+          h(
+            'div',
+            null,
+            h('span', { class: 'eyebrow' }, 'Weak spots'),
+            h('strong', null, `Notes that slip most: ${weak.map((w) => midiToName(w.pitch)).join(', ')}`),
+            h('p', { class: 'muted' }, 'A two-minute exercise built from your recent playing. It changes as you improve.'),
+          ),
+          h('button', { class: 'btn', onclick: () => app.goPractice() }, icon('target'), 'Practise'),
+        ),
       units,
     ),
   )

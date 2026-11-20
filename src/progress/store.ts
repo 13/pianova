@@ -32,7 +32,11 @@ export interface KV {
 
 export const STORAGE_KEY = 'pianova.v1'
 export const BACKUP_KEY = 'pianova.backup'
-const VERSION = 1
+/**
+ * 2: the clock now follows what is heard, so the timing offset only covers input delay.
+ * Offsets saved by version 1 also held the output delay and are reset.
+ */
+const VERSION = 2
 const MAX_STATS = 5000
 const DEFAULT_SETTINGS: Settings = { latencyMs: 0, volume: 0.8, labels: true, midiInputId: null }
 
@@ -115,12 +119,13 @@ export class ProgressStore {
     if (raw === null) return fresh()
     try {
       const data: unknown = JSON.parse(raw)
-      if (!isObject(data) || data.version !== VERSION) throw new Error('unknown save format')
+      if (!isObject(data) || (data.version !== VERSION && data.version !== 1)) throw new Error('unknown save format')
       const blob = fresh()
       if (isObject(data.lessons)) blob.lessons = data.lessons as Record<string, Result>
       if (isObject(data.pieces)) blob.pieces = data.pieces as Record<string, Result>
       if (isObject(data.settings)) blob.settings = { ...DEFAULT_SETTINGS, ...(data.settings as Partial<Settings>) }
       if (Array.isArray(data.stats)) blob.stats = data.stats as StatEvent[]
+      if (data.version === 1) blob.settings.latencyMs = DEFAULT_SETTINGS.latencyMs
       return blob
     } catch {
       // Unreadable save: keep it aside rather than silently destroying it.
