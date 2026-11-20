@@ -90,6 +90,16 @@ describe('Session, timed', () => {
     s.press(60, 0.1)
     expect(s.summary().perfect).toBe(1)
   })
+  it('judges a press by its own timestamp, not the frame it arrived in', () => {
+    const log: number[] = []
+    const s = new Session({ chart: melody, mode: 'timed', hands: ['R'] }, { judged: (_i, _g, off) => log.push(off) })
+    s.start(0)
+    run(s, 0, 1.1)
+    s.press(62, 1.02)
+    expect(log).toHaveLength(2) // the missed first note, then this hit
+    expect(log[1]).toBeCloseTo(20)
+    expect(s.beat).toBeCloseTo(1.1)
+  })
   it('does not turn a long stall into misses', () => {
     const { s } = make({ chart: melody, mode: 'timed' })
     s.start(0)
@@ -149,6 +159,15 @@ describe('Session, wait', () => {
     expect(s.beat).toBe(1)
     expect(s.noteState[0]).toBe('perfect')
     expect(log).not.toContain('click')
+  })
+  it('reports which notes it is waiting for', () => {
+    const chord = compileChart({ id: 'c', title: 'C', bpm: 60, R: 'C4 [C4 E4 G4]' })
+    const { s } = make({ chart: chord, mode: 'wait' })
+    s.start(0)
+    expect(s.pendingNotes()).toEqual([0])
+    s.press(60, 0)
+    expect(s.pendingNotes()).toEqual([1, 2, 3])
+    expect(make({ chart: chord, mode: 'demo' }).s.pendingNotes()).toEqual([])
   })
   it('needs every key of a chord', () => {
     const chord = compileChart({ id: 'c', title: 'C', bpm: 60, R: '[C4 E4 G4] C4' })

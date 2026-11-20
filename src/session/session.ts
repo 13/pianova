@@ -171,7 +171,7 @@ export class Session {
       this.events.autoNote?.(e.pitch, e.on, e.hand)
     }
     if (this.judge) {
-      for (const j of this.judge.advance(this.judgeTime())) {
+      for (const j of this.judge.advance(this.judgeTime(this.beat))) {
         this.noteState[this.judged[j]] = 'miss'
         this.events.judged?.(this.judged[j], 'miss', 0)
       }
@@ -191,9 +191,10 @@ export class Session {
 
   press(pitch: number, now: number): void {
     if (this.state !== 'running' || !this.judge) return
-    this.update(now)
-    if (this.state !== 'running') return
-    const time = this.judgeTime()
+    // Judge at the moment the key went down, which is usually a little before this frame.
+    let delta = now - this.lastNow
+    if (this.mode !== 'timed' || Math.abs(delta) > MAX_FRAME_S) delta = 0
+    const time = this.judgeTime(this.beat + delta / this.secondsPerBeat)
     // Noodling during the count-in is not a mistake.
     if (this.mode === 'timed' && time < this.rangeStart * this.secondsPerBeat - GOOD_MS / 1000) return
     const result = this.judge.press(pitch, time)
@@ -206,6 +207,12 @@ export class Session {
     }
   }
 
+  /** Chart indexes of the notes a waiting session is holding for (empty when not waiting). */
+  pendingNotes(): number[] {
+    if (this.mode !== 'wait' || !this.judge) return []
+    return this.judge.pendingGroup().map((j) => this.judged[j])
+  }
+
   /** Releases are not scored in v1; kept so callers need not care. */
   release(_pitch: number): void {}
 
@@ -213,8 +220,8 @@ export class Session {
     return (this.judge ?? new Judge([], 'timed')).summary()
   }
 
-  private judgeTime(): number {
-    return this.beat * this.secondsPerBeat - (this.mode === 'timed' ? this.latency : 0)
+  private judgeTime(beat: number): number {
+    return beat * this.secondsPerBeat - (this.mode === 'timed' ? this.latency : 0)
   }
 
   /** Back to the start of the range; `overshoot` beats carry over when looping. */

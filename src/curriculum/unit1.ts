@@ -10,8 +10,8 @@ export const unit1: Lesson[] = [
     ),
     say(
       'How the highway works',
-      'Notes slide down towards the keyboard. When a note reaches the bright line, press the key it lands on.\n\nIn this lesson the notes wait for you, so there is no rush. Use the pointer finger of your right hand.\n\nPress any key of the group of two black keys to carry on.',
-      { highlight: ['C#4', 'D#4'], pressToContinue: 'C#4' },
+      'Notes slide down towards the keyboard. When a note reaches the bright line, press the key it lands on.\n\nIn this lesson the notes wait for you, so there is no rush. Use the pointer finger of your right hand.\n\nPress the glowing black key to carry on.',
+      { highlight: ['C#4'], pressToContinue: 'C#4' },
     ),
     ...play(chart('u1l1', 'Twos and threes', 80, { R: pointer('C#4 D#4 C#4 D#4 | F#4 G#4 A#4 -:1 | F#4 G#4 A#4 -:1 | C#4 D#4 F#4:2') }), 'pitch'),
   ]),
