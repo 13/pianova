@@ -14,6 +14,8 @@ export interface PlayConfig {
   tempoScale?: number
   /** Show the practice tools (tempo, wait, hands, loop). */
   tools: boolean
+  /** Click the beat during a demo (for music that will be played in time). */
+  metronome?: boolean
   /** Show streak and accuracy. */
   scored: boolean
   /** Short tag shown before the title, e.g. "Watch" or "Practise". */
@@ -47,6 +49,7 @@ export class PlayView implements View {
   private finishTimer = 0
   private pausedByDisconnect = false
   private hadDevice: boolean
+  private hintShift = 0
 
   // Current practice settings (start from the config, changed by the tools).
   private mode: Mode
@@ -112,7 +115,7 @@ export class PlayView implements View {
 
     this.highway = new Highway(canvas)
     this.highway.setRange(chart)
-    this.highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys })
+    this.syncHints()
 
     this.cleanups.push(
       app.input.onNote((pitch, on, perfTime) => {
@@ -120,7 +123,7 @@ export class PlayView implements View {
         else this.session.release(pitch)
       }),
       app.input.onStatus((status) => {
-        this.highway.setOptions({ labels: app.progress.settings.labels, keyHints: status.inputs.length === 0 })
+        this.syncHints()
         if (status.inputs.length === 0 && this.session.state === 'running' && this.hadDevice) {
           this.pausedByDisconnect = true
           this.setPaused(true, 'Your keyboard was disconnected. Plug it back in to carry on.')
@@ -172,6 +175,7 @@ export class PlayView implements View {
         tempoScale: this.tempo,
         loop: this.loop ?? undefined,
         countIn: this.mode === 'timed',
+        metronome: this.cfg.metronome,
         latencyMs: this.app.progress.settings.latencyMs,
       },
       {
@@ -234,8 +238,15 @@ export class PlayView implements View {
     this.autoHeld.clear()
   }
 
+  /** Key hints show which computer key plays each note, when there is no MIDI keyboard. */
+  private syncHints(): void {
+    this.hintShift = this.app.input.octaveShift
+    this.highway.setOptions({ labels: this.app.progress.settings.labels, keyHints: this.app.usingComputerKeys, hintShift: this.hintShift })
+  }
+
   private frame = (): void => {
     this.raf = requestAnimationFrame(this.frame)
+    if (this.app.input.octaveShift !== this.hintShift) this.syncHints()
     const { session } = this
     const { chart } = this.cfg
     session.update(this.app.synth.now())

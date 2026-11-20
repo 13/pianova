@@ -160,16 +160,17 @@ describe('Session, wait', () => {
     expect(s.noteState[0]).toBe('perfect')
     expect(log).not.toContain('click')
   })
-  it('ignores presses for a note that is still more than a beat away', () => {
-    const late = compileChart({ id: 'l', title: 'L', bpm: 60, R: '-:3 C4' })
-    const { s, log } = make({ chart: late, mode: 'wait' })
+  it('accepts an early press and pulls the music forward to that note', () => {
+    const buns = compileChart({ id: 'b', title: 'B', bpm: 60, R: 'E4:2 D4:2 C4:4' })
+    const { s, log } = make({ chart: buns, mode: 'wait' })
     s.start(0)
-    s.press(60, 0)
-    expect(s.noteState[0]).toBe('pending')
-    expect(log).toEqual([])
-    run(s, 0, 2)
-    s.press(60, 2)
-    expect(s.noteState[0]).toBe('perfect')
+    s.press(64, 0)
+    s.press(62, 0)
+    expect(s.noteState.slice(0, 2)).toEqual(['perfect', 'perfect'])
+    expect(s.beat).toBe(2)
+    expect(log).not.toContain('wrong62')
+    run(s, 0, 1)
+    expect(s.beat).toBeCloseTo(3)
   })
   it('reports which notes it is waiting for', () => {
     const chord = compileChart({ id: 'c', title: 'C', bpm: 60, R: 'C4 [C4 E4 G4]' })
@@ -209,6 +210,16 @@ describe('Session, wait', () => {
 })
 
 describe('Session, demo', () => {
+  it('clicks the beat only when asked to', () => {
+    const quiet = make({ chart: melody, mode: 'demo' })
+    quiet.s.start(0)
+    run(quiet.s, 0, 2)
+    expect(quiet.log.filter((l) => /click/i.test(l))).toEqual([])
+    const ticking = make({ chart: melody, mode: 'demo', metronome: true })
+    ticking.s.start(0)
+    run(ticking.s, 0, 2.02)
+    expect(ticking.log.filter((l) => /click/i.test(l))).toEqual(['CLICK', 'click', 'click'])
+  })
   it('plays every note itself and judges nothing', () => {
     const { s, log } = make({ chart: twoHands, mode: 'demo' })
     s.start(0)

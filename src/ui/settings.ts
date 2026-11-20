@@ -25,8 +25,8 @@ export function settingsView(app: App): View {
       h('option', { value: '' }, 'All connected keyboards'),
       ...s.inputs.map((i) => h('option', { value: i.id }, i.name)),
     )
-    const chosen = progress.settings.midiInputId
-    device.value = chosen && s.inputs.some((i) => i.id === chosen) ? chosen : ''
+    // Show what is actually being listened to, not just what was last chosen.
+    device.value = s.activeId ?? ''
     deviceNote.textContent = !s.supported
       ? 'This browser has no MIDI support. Use Chrome or Chromium to connect a keyboard.'
       : s.error

@@ -14,9 +14,9 @@ export function pitchForCode(code: string, octaveShift: number): number | null {
   return pitch >= 21 && pitch <= 108 ? pitch : null
 }
 
-/** The computer key that plays a pitch at no octave shift, as a short label ('Z', '2'), if any. */
-export function labelForPitch(pitch: number): string | null {
-  const code = CODES[pitch - BASE]
+/** The computer key that plays a pitch at the given octave shift, as a short label ('Z', '2'), if any. */
+export function labelForPitch(pitch: number, octaveShift: number): string | null {
+  const code = CODES[pitch - BASE - octaveShift * 12]
   return code ? code.replace(/^Key|^Digit/, '') : null
 }
 
@@ -25,6 +25,8 @@ export type NoteCallback = (pitch: number, on: boolean, perfTime: number, veloci
 /** Plays notes from the computer keyboard. `[` and `]` shift by an octave. */
 export class KeyboardInput {
   octaveShift = 0
+  /** Octave shifting is for Free Play; lessons keep the keys where the hints say they are. */
+  shiftEnabled = false
   /** code → pitch it started, so a release after an octave shift ends the right note. */
   private down = new Map<string, number>()
 
@@ -37,6 +39,7 @@ export class KeyboardInput {
   private onDown = (e: KeyboardEvent): void => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
+      if (!this.shiftEnabled) return
       this.octaveShift = Math.max(-2, Math.min(3, this.octaveShift + (e.code === 'BracketLeft' ? -1 : 1)))
       return
     }

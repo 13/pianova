@@ -14,6 +14,10 @@ export interface MidiStatus {
 export class MidiInput {
   status: MidiStatus = { supported: 'requestMIDIAccess' in navigator, inputs: [], activeId: null }
   private access: MIDIAccess | null = null
+  /** The device the user asked for; ignored while it is not connected. */
+  private wantedId: string | null = null
+  /** Per listened-to device: keys and pedal currently down, so they can be released if it goes away. */
+  private down = new Map<string, { keys: Set<number>; pedal: boolean }>()
 
   constructor(
     private emit: NoteCallback,
@@ -22,7 +26,7 @@ export class MidiInput {
   ) {}
 
   async init(preferredId: string | null): Promise<void> {
-    this.status.activeId = preferredId
+    this.wantedId = preferredId
     if (!this.status.supported) {
       this.onStatus(this.status)
       return
@@ -38,31 +42,56 @@ export class MidiInput {
   }
 
   select(id: string | null): void {
-    this.status.activeId = id
+    this.wantedId = id
     this.refresh()
   }
 
   private refresh(): void {
     if (!this.access) return
-    const inputs: MidiStatus['inputs'] = []
-    for (const input of this.access.inputs.values()) {
-      // "Midi Through" is a kernel loopback, never a keyboard.
-      const isReal = input.state === 'connected' && !/midi through/i.test(input.name ?? '')
-      if (isReal) inputs.push({ id: input.id, name: input.name ?? 'MIDI device' })
-      const { activeId } = this.status
-      input.onmidimessage = isReal && (activeId === null || activeId === input.id) ? this.onMessage : null
+    const all = [...this.access.inputs.values()]
+    // "Midi Through" is a kernel loopback, never a keyboard.
+    const real = all.filter((input) => input.state === 'connected' && !/midi through/i.test(input.name ?? ''))
+    // A chosen device that is not plugged in must not silence the ones that are.
+    const activeId = real.some((input) => input.id === this.wantedId) ? this.wantedId : null
+
+    for (const input of all) {
+      const listen = real.includes(input) && (activeId === null || activeId === input.id)
+      if (listen) {
+        if (!this.down.has(input.id)) this.down.set(input.id, { keys: new Set(), pedal: false })
+        input.onmidimessage = (e) => this.onMessage(input.id, e)
+      } else {
+        input.onmidimessage = null
+        this.release(input.id)
+      }
     }
-    this.status = { ...this.status, inputs, error: undefined }
+    this.status = { ...this.status, inputs: real.map((i) => ({ id: i.id, name: i.name ?? 'MIDI device' })), activeId, error: undefined }
     this.onStatus(this.status)
   }
 
-  private onMessage = (e: MIDIMessageEvent): void => {
+  /** A device we stop hearing can never send its note-offs, so send them for it. */
+  private release(inputId: string): void {
+    const state = this.down.get(inputId)
+    if (!state) return
+    this.down.delete(inputId)
+    for (const pitch of state.keys) this.emit(pitch, false, performance.now(), 0)
+    if (state.pedal) this.onSustain(false)
+  }
+
+  private onMessage(inputId: string, e: MIDIMessageEvent): void {
     const data = e.data
-    if (!data || data.length < 3) return
+    const state = this.down.get(inputId)
+    if (!data || data.length < 3 || !state) return
     const command = data[0] & 0xf0
-    if (command === 0x90 && data[2] > 0) this.emit(data[1], true, e.timeStamp, data[2] / 127)
-    // A note-on with velocity 0 is how many keyboards send note-off.
-    else if (command === 0x80 || command === 0x90) this.emit(data[1], false, e.timeStamp, 0)
-    else if (command === 0xb0 && data[1] === 64) this.onSustain(data[2] >= 64)
+    if (command === 0x90 && data[2] > 0) {
+      state.keys.add(data[1])
+      this.emit(data[1], true, e.timeStamp, data[2] / 127)
+    } else if (command === 0x80 || command === 0x90) {
+      // A note-on with velocity 0 is how many keyboards send note-off.
+      state.keys.delete(data[1])
+      this.emit(data[1], false, e.timeStamp, 0)
+    } else if (command === 0xb0 && data[1] === 64) {
+      state.pedal = data[2] >= 64
+      this.onSustain(state.pedal)
+    }
   }
 }

@@ -12,6 +12,7 @@ export class InputHub {
   private statusListeners = new Set<(s: MidiStatus) => void>()
   private sustainListeners = new Set<(down: boolean) => void>()
   private midi: MidiInput
+  private keyboard: KeyboardInput
 
   constructor() {
     const emit: NoteCallback = (pitch, on, perfTime, velocity) => {
@@ -20,7 +21,7 @@ export class InputHub {
       else this.held.delete(pitch)
       for (const cb of [...this.noteListeners]) cb(pitch, on, perfTime, velocity)
     }
-    new KeyboardInput(emit)
+    this.keyboard = new KeyboardInput(emit)
     this.midi = new MidiInput(
       emit,
       (down) => this.sustainListeners.forEach((cb) => cb(down)),
@@ -38,6 +39,17 @@ export class InputHub {
 
   selectInput(id: string | null): void {
     this.midi.select(id)
+  }
+
+  /** How many octaves the computer keys are shifted (always 0 unless shifting is allowed). */
+  get octaveShift(): number {
+    return this.keyboard.octaveShift
+  }
+
+  /** Allow or forbid the [ and ] octave-shift keys; forbidding also resets the shift. */
+  allowOctaveShift(allowed: boolean): void {
+    this.keyboard.shiftEnabled = allowed
+    if (!allowed) this.keyboard.octaveShift = 0
   }
 
   /** Each returns a function that removes the listener. */

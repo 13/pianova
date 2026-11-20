@@ -17,6 +17,8 @@ export interface SessionOptions {
   countIn?: boolean
   /** How late the player's presses arrive, in ms; subtracted before judging. */
   latencyMs?: number
+  /** Click on every beat. Always on in timed mode; opt-in for demos of timed music. */
+  metronome?: boolean
 }
 
 export interface SessionEvents {
@@ -33,8 +35,6 @@ const MAX_FRAME_S = 0.25
 /** Auto-played notes release slightly early so repeated notes re-strike. */
 const AUTO_LENGTH = 0.95
 const EPS = 1e-9
-/** In wait mode a note can be played once it is this close to the line. */
-const WAIT_REACH_BEATS = 1
 
 interface AutoEvent {
   beat: number
@@ -63,6 +63,7 @@ export class Session {
   private readonly rangeEnd: number
   private readonly looping: boolean
   private readonly countIn: boolean
+  private readonly metronome: boolean
   private readonly latency: number
   private readonly events: Partial<SessionEvents>
   /** Judge index → chart note index. */
@@ -81,6 +82,7 @@ export class Session {
     this.events = events
     this.secondsPerBeat = 60 / (chart.bpm * (opts.tempoScale ?? 1))
     this.countIn = !!opts.countIn && opts.mode === 'timed'
+    this.metronome = opts.mode === 'timed' || (!!opts.metronome && opts.mode === 'demo')
     this.latency = (opts.latencyMs ?? 0) / 1000
 
     const lastEnd = chart.notes.reduce((m, n) => Math.max(m, n.startBeat + n.durationBeats), 0)
@@ -159,7 +161,7 @@ export class Session {
     }
     this.beat = target
 
-    if (this.mode === 'timed') {
+    if (this.metronome) {
       while (this.nextClick <= this.beat + EPS && this.nextClick < this.rangeEnd - EPS) {
         const bpb = this.chart.beatsPerBar
         this.events.click?.((((this.nextClick % bpb) + bpb) % bpb) === 0)
@@ -197,17 +199,14 @@ export class Session {
     let delta = now - this.lastNow
     if (this.mode !== 'timed' || Math.abs(delta) > MAX_FRAME_S) delta = 0
     const time = this.judgeTime(this.beat + delta / this.secondsPerBeat)
-    if (this.mode === 'wait') {
-      // Only the note that is arriving can be played; pressing far ahead does nothing.
-      const pending = this.judge.pendingGroup()
-      if (pending.length && this.chart.notes[this.judged[pending[0]]].startBeat - this.beat > WAIT_REACH_BEATS + EPS) return
-    }
     // Noodling during the count-in is not a mistake.
     if (this.mode === 'timed' && time < this.rangeStart * this.secondsPerBeat - GOOD_MS / 1000) return
     const result = this.judge.press(pitch, time)
     if (result.kind === 'hit') {
       const index = this.judged[result.index]
       this.noteState[index] = result.grade
+      // Played before it arrived (wait mode): bring the music forward to meet the player.
+      if (this.mode === 'wait') this.beat = Math.max(this.beat, this.chart.notes[index].startBeat)
       this.events.judged?.(index, result.grade, result.offsetMs)
     } else {
       this.events.wrong?.(pitch)

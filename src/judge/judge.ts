@@ -31,7 +31,8 @@ export interface Summary {
 
 export const PERFECT_MS = 50
 export const GOOD_MS = 120
-const WEIGHT: Record<Grade, number> = { perfect: 1, good: 0.7, miss: 0 }
+/** Score per note in tenths (perfect 1.0, good 0.7); integers keep pass marks exact. */
+const TENTHS: Record<Grade, number> = { perfect: 10, good: 7, miss: 0 }
 /** Notes starting within this many seconds of each other form one chord. */
 const GROUP_EPS = 1e-6
 
@@ -146,12 +147,12 @@ export class Judge {
     this.grades.forEach((g, i) => {
       if (g) s[g]++
       if (g === 'miss') s.missedPitches[this.notes[i].pitch] = (s.missedPitches[this.notes[i].pitch] ?? 0) + 1
-      const w = g ? WEIGHT[g] : 0
-      groupMin.set(key(i), Math.min(groupMin.get(key(i)) ?? 1, w))
+      const w = g ? TENTHS[g] : 0
+      groupMin.set(key(i), Math.min(groupMin.get(key(i)) ?? 10, w))
     })
     let score = 0
     this.notes.forEach((_, i) => (score += groupMin.get(key(i)) ?? 0))
-    s.accuracy = s.total ? score / (s.total + s.wrong) : 0
+    s.accuracy = s.total ? score / (10 * (s.total + s.wrong)) : 0
     return s
   }
 }

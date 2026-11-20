@@ -61,6 +61,8 @@ export class LessonView implements View {
       ),
     )
     const next = () => this.go(index + 1)
+    // Lessons that end in a timed run get a metronome in the demo too, so the beat is heard first.
+    const timedLesson = this.lesson.steps.some((s) => s.type === 'perform' && s.judging === 'timed')
 
     if (step.type === 'explain') {
       this.mount(explainView(this.app, step, next))
@@ -73,6 +75,7 @@ export class LessonView implements View {
         hands: step.type === 'demo' ? undefined : step.hands,
         tempoScale: slow ? SLOW_TEMPO : 1,
         tools: step.type === 'drill',
+        metronome: timedLesson,
         scored: step.type === 'perform',
         label: slow ? `${STEP_NAMES[step.type]} · slower` : STEP_NAMES[step.type],
         onSkip: step.type === 'perform' ? undefined : next,
@@ -132,8 +135,11 @@ export class LessonView implements View {
 
     const nextLesson = LESSONS[LESSONS.indexOf(this.lesson) + 1]
     const passed = earned > 0
-    const retry = { label: passed ? 'Play again' : 'Try again', primary: !passed, onclick: () => this.go(this.index) }
-    const slower = { label: 'Slow it down', onclick: () => this.go(this.index, true) }
+    // Retrying keeps the tempo you chose; the other tempo is always one click away.
+    const retry = { label: passed ? 'Play again' : 'Try again', primary: !passed, onclick: () => this.go(this.index, slow) }
+    const otherTempo = slow
+      ? { label: 'Full speed', onclick: () => this.go(this.index) }
+      : { label: 'Slow it down', onclick: () => this.go(this.index, true) }
     const onward = !isLastStep
       ? { label: 'Continue', primary: true, onclick: () => this.go(this.index + 1) }
       : nextLesson
@@ -154,7 +160,7 @@ export class LessonView implements View {
           actions: [
             ...(passed ? [onward] : []),
             retry,
-            ...(step.judging === 'timed' && !slow && earned < 2 ? [slower] : []),
+            ...(step.judging === 'timed' && (slow || earned < 2) ? [otherTempo] : []),
             { label: 'Back to lessons', onclick: () => this.app.goPath() },
           ],
         }),
@@ -188,7 +194,7 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
   const highway = new Highway(canvas)
   highway.setRange(null)
   const highlight = new Map<number, Hand | 'hint'>((step.highlight ?? []).map((name) => [nameToMidi(name), 'hint']))
-  const setOptions = () => highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys })
+  const setOptions = () => highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys, hintShift: app.input.octaveShift })
   setOptions()
 
   let raf = 0

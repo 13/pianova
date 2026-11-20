@@ -43,6 +43,7 @@ export class Highway {
   private hi = 72
   private labels = true
   private keyHints = false
+  private hintShift = 0
   private held = new Set<number>()
   private flashes: Flash[] = []
   private w = 0
@@ -73,9 +74,10 @@ export class Highway {
     this.hi = Math.min(108, hi)
   }
 
-  setOptions(opts: { labels: boolean; keyHints: boolean }): void {
+  setOptions(opts: { labels: boolean; keyHints: boolean; hintShift?: number }): void {
     this.labels = opts.labels
     this.keyHints = opts.keyHints
+    this.hintShift = opts.hintShift ?? 0
   }
 
   setHeld(held: Set<number>): void {
@@ -338,7 +340,7 @@ export class Highway {
         g.font = `${p % 12 === 0 ? 700 : 500} ${Math.min(15, whiteW * 0.42)}px ${FONT}`
         g.fillText(midiToLetter(p) + (p % 12 === 0 ? String(Math.floor(p / 12) - 1) : ''), k.x, top + keyH - 10)
       }
-      const hint = this.keyHints ? labelForPitch(p) : null
+      const hint = this.keyHints ? labelForPitch(p, this.hintShift) : null
       if (hint && whiteW >= 26) {
         g.fillStyle = 'rgba(42, 47, 90, 0.45)'
         g.font = `600 ${Math.min(12, whiteW * 0.32)}px ${FONT}`
@@ -353,7 +355,7 @@ export class Highway {
       g.fillStyle = mark ? shade(mark, held ? 1 : 0.7) : held ? '#6f78d8' : '#14162b'
       roundRect(g, k.x - k.width / 2, top, k.width, blackH, 4)
       g.fill()
-      const hint = this.keyHints ? labelForPitch(p) : null
+      const hint = this.keyHints ? labelForPitch(p, this.hintShift) : null
       if (hint && whiteW >= 26) {
         g.fillStyle = 'rgba(255, 255, 255, 0.5)'
         g.font = `600 ${Math.min(11, whiteW * 0.28)}px ${FONT}`

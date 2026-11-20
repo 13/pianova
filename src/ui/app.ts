@@ -49,7 +49,10 @@ export class App {
   }
 
   private welcome(): View {
+    let started = false
     const begin = async () => {
+      if (started) return
+      started = true
       this.synth = new Synth()
       this.synth.setVolume(this.progress.settings.volume)
       this.input.onNote((pitch, on, _time, velocity) => (on ? this.synth.noteOn(pitch, velocity) : this.synth.noteOff(pitch)))

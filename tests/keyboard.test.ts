@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pitchForCode } from '../src/input/keyboard'
+import { labelForPitch, pitchForCode } from '../src/input/keyboard'
 
 describe('pitchForCode', () => {
   it('maps the lower rows to C3–B3 and the upper rows to C4–C5', () => {
@@ -24,5 +24,16 @@ describe('pitchForCode', () => {
   it('ignores other keys', () => {
     expect(pitchForCode('Space', 0)).toBeNull()
     expect(pitchForCode('KeyA', 0)).toBeNull()
+  })
+})
+
+describe('labelForPitch', () => {
+  it('names the computer key for a pitch, following the octave shift', () => {
+    expect(labelForPitch(60, 0)).toBe('Q')
+    expect(labelForPitch(61, 0)).toBe('2')
+    expect(labelForPitch(72, 1)).toBe('Q')
+    expect(labelForPitch(60, 1)).toBe('Z')
+    expect(labelForPitch(47, 0)).toBeNull()
+    expect(labelForPitch(73, 0)).toBeNull()
   })
 })

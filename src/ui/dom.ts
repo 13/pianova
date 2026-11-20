@@ -58,4 +58,5 @@ export function stars(count: number, cls = ''): HTMLElement {
   )
 }
 
-export const percent = (fraction: number): string => `${Math.round(fraction * 100)}%`
+/** Whole percent, rounded down so 69.9% never reads as a passing 70%. */
+export const percent = (fraction: number): string => `${Math.floor(fraction * 100 + 1e-6)}%`

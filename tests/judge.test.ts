@@ -50,6 +50,14 @@ describe('Judge, timed', () => {
     expect(j.summary()).toMatchObject({ good: 1, miss: 1 })
     expect(j.summary().accuracy).toBeCloseTo(0.35)
   })
+  it('scores an all-good run as exactly 0.7, whatever its length', () => {
+    for (const count of [7, 13, 26, 32]) {
+      const j = new Judge(Array.from({ length: count }, (_, i) => n(60, i + 1)), 'timed')
+      for (let i = 0; i < count; i++) j.press(60, i + 1.1)
+      expect(j.summary().accuracy, `${count} notes`).toBe(0.7)
+      expect(starsFor(j.summary().accuracy, 0.7)).toBe(1)
+    }
+  })
   it('scores a whole chord as its weakest note', () => {
     const j = new Judge([n(60, 1), n(64, 1), n(67, 1), n(60, 2)], 'timed')
     j.press(60, 1)

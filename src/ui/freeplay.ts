@@ -130,6 +130,13 @@ function playPiece(app: App, chart: Chart, pieceId: string | null): View {
     ),
     body,
   )
+  app.input.allowOctaveShift(true)
   start()
-  return { el, destroy: () => current?.destroy?.() }
+  return {
+    el,
+    destroy() {
+      current?.destroy?.()
+      app.input.allowOctaveShift(false)
+    },
+  }
 }
