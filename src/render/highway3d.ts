@@ -9,7 +9,7 @@ import { isBlack, midiToLetter } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
-import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, type FlashTiming, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
+import { COLORS, FONT, LOOKAHEAD, lighten, type FlashTiming, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
 import { chordGroups, focusRange, handZones, streakMilestone, timingLabel, type ChordGroup, type Tone } from './staging'
 
 // World units: one white key is 1 wide. x runs along the keyboard, y is up, and the
@@ -40,10 +40,22 @@ const MAX_RINGS = 24
 const MAX_GLOWS = 12
 const DUST = 160
 
-/** The camera never frames fewer white keys than this (three octaves). */
-const MIN_VIEW = 22
+/** A full piano: A0 to C8, 52 white keys. The camera frames the part the music needs. */
+const PIANO_LO = 21
+const PIANO_HI = 108
+/** What the camera frames with no music to follow: C3 to C5, around middle C. */
+const HOME_LO = 48
+const HOME_HI = 72
+/** The camera frames at least this many white keys (four octaves and a bit)... */
+const MIN_VIEW = 30
+/** ...unless the screen is too narrow to keep keys this many pixels wide. */
+const MIN_KEY_PX = 26
 /** White keys left spare either side of the music the camera follows. */
-const VIEW_MARGIN = 2.5
+const VIEW_MARGIN = 3
+/** Finger numbers float over the keys for notes this close (in beats). */
+const CUE_BEATS = 1.6
+const MAX_CUES = 10
+const MAX_MARKS = 4
 /** The keyboard takes at most this share of the screen height; when zoomed in, its front runs off the bottom. */
 const MAX_KEYS_SHARE = 0.34
 /** Long notes (this many beats or more) are drawn as a head with a trail. */
@@ -155,9 +167,11 @@ export class Highway3D implements HighwayRenderer {
   private h = 0
   private tanV = 0.3
 
-  private lo = 43
-  private hi = 77
+  private readonly lo = PIANO_LO
+  private readonly hi = PIANO_HI
   private whites = 0
+  /** x of the middle of each key, by pitch. */
+  private xs: number[] = []
   /** Length of the highway in world units, and of one beat on it. */
   private length = 60
   private beatLen = 7.5
@@ -209,6 +223,10 @@ export class Highway3D implements HighwayRenderer {
   /** Brief flash along the hit line after a streak milestone, 0..1. */
   private surge = 0
   private timeUniform = { value: 0 }
+  /** Finger numbers floating over the keys about to be played. */
+  private cues: THREE.Sprite[] = []
+  /** Lines across the highway where each part of the song begins. */
+  private marks: { bar: THREE.Mesh; mat: THREE.MeshBasicMaterial; label: THREE.Sprite }[] = []
 
   private textures = new Map<string, THREE.CanvasTexture>()
   private last = performance.now()
@@ -295,6 +313,24 @@ export class Highway3D implements HighwayRenderer {
       scene.add(sprite)
       this.popups.push({ sprite, age: 0, life: POPUP_LIFE, alive: false, pitch: 0, rise: 1.4, size: 1 })
     }
+    for (let i = 0; i < MAX_CUES; i++) {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, toneMapped: false }))
+      sprite.visible = false
+      sprite.renderOrder = 8
+      scene.add(sprite)
+      this.cues.push(sprite)
+    }
+    for (let i = 0; i < MAX_MARKS; i++) {
+      const mat = new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat)
+      bar.rotation.x = -Math.PI / 2
+      bar.renderOrder = 3
+      const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, toneMapped: false }))
+      label.renderOrder = 9
+      bar.visible = label.visible = false
+      scene.add(bar, label)
+      this.marks.push({ bar, mat, label })
+    }
     const zone = (): Zone => {
       const strip = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), stripMaterial())
       strip.renderOrder = 6
@@ -334,11 +370,8 @@ export class Highway3D implements HighwayRenderer {
   setRange(chart: Chart | null): void {
     this.chart = chart
     this.chords = chart ? chordGroups(chart) : []
-    const { lo, hi } = keyRange(chart)
-    if (lo === this.lo && hi === this.hi) return
-    this.lo = lo
-    this.hi = hi
-    this.buildKeys()
+    // Start already looking at the music's first notes rather than gliding over from middle C.
+    this.viewW = 0
     this.layout()
   }
 
@@ -390,9 +423,7 @@ export class Highway3D implements HighwayRenderer {
   }
 
   private keyX(pitch: number): number {
-    let whites = 0
-    for (let p = this.lo; p < pitch; p++) if (!isBlack(p)) whites++
-    return isBlack(pitch) ? whites : whites + 0.5
+    return this.xs[Math.max(this.lo, Math.min(this.hi, pitch))]
   }
 
   private buildKeys(): void {
@@ -405,7 +436,10 @@ export class Highway3D implements HighwayRenderer {
     this.labelKey = ''
 
     let whites = 0
-    for (let p = this.lo; p <= this.hi; p++) if (!isBlack(p)) whites++
+    for (let p = this.lo; p <= this.hi; p++) {
+      this.xs[p] = isBlack(p) ? whites : whites + 0.5
+      if (!isBlack(p)) whites++
+    }
     this.whites = whites
     this.viewW = 0
 
@@ -477,26 +511,27 @@ export class Highway3D implements HighwayRenderer {
     this.hitHalo.position.set(cx, 0.02, -1.0)
     this.hitHalo.rotation.x = -Math.PI / 2
 
-    const l = this.keyLight
-    l.position.set(cx - W * 0.12, 14, -7)
-    l.target.position.set(cx, 0, KEY_LEN * 0.5)
-    const sc = l.shadow.camera
-    sc.left = -W * 0.62
-    sc.right = W * 0.62
-    sc.top = 9
-    sc.bottom = -9
-    sc.near = 1
-    sc.far = 40
-    sc.updateProjectionMatrix()
-
     if (!this.viewW) this.resetView()
     this.aim()
     this.labelKey = ''
   }
 
   private resetView(): void {
-    this.viewW = this.targetW = this.whites
-    this.viewCx = this.targetCx = this.whites / 2
+    const range = (this.chart && focusRange(this.chart, 0, LOOKAHEAD * 0.8)) ?? { lo: HOME_LO, hi: HOME_HI }
+    this.frameRange(range.lo, range.hi)
+    this.viewW = this.targetW
+    this.viewCx = this.targetCx
+  }
+
+  /** Sets the camera's target to show keys lo..hi with some spare, at least a few octaves wide. */
+  private frameRange(lo: number, hi: number): void {
+    const W = this.whites
+    const minView = Math.min(MIN_VIEW, Math.max(12, this.w / MIN_KEY_PX))
+    const x0 = this.keyX(lo) - 0.5 - VIEW_MARGIN
+    const x1 = this.keyX(hi) + 0.5 + VIEW_MARGIN
+    this.targetW = Math.min(W, Math.max(minView, x1 - x0))
+    const half = this.targetW / 2
+    this.targetCx = Math.min(W - half, Math.max(half, (x0 + x1) / 2))
   }
 
   /**
@@ -531,6 +566,20 @@ export class Highway3D implements HighwayRenderer {
     cam.projectionMatrix.elements[9] = Math.max(front + 1, line - maxLine)
     cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert()
 
+    // The shadow-casting light covers just the keys in view, so its shadows stay crisp.
+    const l = this.keyLight
+    l.position.set(cx - W * 0.12, 14, -7)
+    l.target.position.set(cx, 0, KEY_LEN * 0.5)
+    l.target.updateMatrixWorld()
+    const sc = l.shadow.camera
+    sc.left = -W * 0.62 - 2
+    sc.right = W * 0.62 + 2
+    sc.top = 9
+    sc.bottom = -9
+    sc.near = 1
+    sc.far = 40
+    sc.updateProjectionMatrix()
+
     // The highway runs back to wherever the top of the screen meets the floor.
     raycaster.setFromCamera(tmpV2.set(0, 1), cam)
     const hit = raycaster.ray.intersectPlane(floorPlane, tmpV)
@@ -553,18 +602,23 @@ export class Highway3D implements HighwayRenderer {
 
   /** Eases the camera towards the keys the music needs next. */
   private follow(frame: Frame, dt: number): void {
-    const W = this.whites
     const chart = frame.chart
-    const range = chart ? focusRange(chart, frame.beat, LOOKAHEAD * 0.8) : null
-    if (!chart) {
-      this.targetW = W
-      this.targetCx = W / 2
-    } else if (range) {
-      const x0 = this.keyX(Math.max(this.lo, range.lo)) - 0.5 - VIEW_MARGIN
-      const x1 = this.keyX(Math.min(this.hi, range.hi)) + 0.5 + VIEW_MARGIN
-      this.targetW = Math.min(W, Math.max(MIN_VIEW, x1 - x0))
-      const half = this.targetW / 2
-      this.targetCx = Math.min(W - half, Math.max(half, (x0 + x1) / 2))
+    if (chart) {
+      const range = focusRange(chart, frame.beat, LOOKAHEAD * 0.8)
+      if (range) this.frameRange(range.lo, range.hi)
+    } else {
+      // Explanations: around middle C, taking in any keys being pointed out.
+      let lo = HOME_LO
+      let hi = HOME_HI
+      for (const p of frame.highlight?.keys() ?? []) {
+        lo = Math.min(lo, p)
+        hi = Math.max(hi, p)
+      }
+      for (const p of this.held) {
+        lo = Math.min(lo, p)
+        hi = Math.max(hi, p)
+      }
+      this.frameRange(lo, hi)
     }
     // Slow and smooth, so the keys never seem to slide out from under the hands.
     const k = 1 - Math.exp(-dt * 1.6)
@@ -577,7 +631,7 @@ export class Highway3D implements HighwayRenderer {
   // ---- labels ----------------------------------------------------------------
 
   /** A small transparent texture of some text, shared by every key or note that shows it. */
-  private text(text: string, style: 'c' | 'letter' | 'hint' | 'hintDark' | 'note' | 'chord' | 'pop', color = '#ffffff'): THREE.CanvasTexture {
+  private text(text: string, style: 'c' | 'letter' | 'hint' | 'hintDark' | 'note' | 'chord' | 'pop' | 'finger', color = '#ffffff'): THREE.CanvasTexture {
     const id = `${style}|${color}|${text}`
     const cached = this.textures.get(id)
     if (cached) return cached
@@ -588,7 +642,22 @@ export class Highway3D implements HighwayRenderer {
     const g = c.getContext('2d')!
     g.textAlign = 'center'
     g.textBaseline = 'middle'
-    if (wide) {
+    if (style === 'finger') {
+      // A badge in the hand's colour: the finger number on a glowing disc.
+      g.shadowColor = color
+      g.shadowBlur = 14
+      g.fillStyle = color
+      g.beginPath()
+      g.arc(64, 64, 46, 0, Math.PI * 2)
+      g.fill()
+      g.shadowBlur = 0
+      g.lineWidth = 6
+      g.strokeStyle = 'rgba(255, 255, 255, 0.92)'
+      g.stroke()
+      g.font = `800 66px ${FONT}`
+      g.fillStyle = 'rgba(6, 8, 26, 1)'
+      g.fillText(text, 64, 69)
+    } else if (wide) {
       // Bold, with a dark outline and a glow of its own colour so it reads over anything.
       g.font = `${style === 'pop' ? 'italic 900' : '800'} ${style === 'pop' ? 62 : 70}px ${FONT}`
       const size = g.measureText(text).width
@@ -618,7 +687,7 @@ export class Highway3D implements HighwayRenderer {
       g.font = `700 50px ${FONT}`
       g.fillStyle = style === 'hint' ? 'rgba(255, 255, 255, 0.62)' : 'rgba(64, 60, 54, 0.55)'
     }
-    if (!wide) g.fillText(text, 64, 68)
+    if (!wide && style !== 'finger') g.fillText(text, 64, 68)
     const t = new THREE.CanvasTexture(c)
     t.colorSpace = THREE.SRGBColorSpace
     t.anisotropy = 4
@@ -686,6 +755,8 @@ export class Highway3D implements HighwayRenderer {
     this.updateKeys(frame, dt, sounding)
     this.updateFloor(frame, sounding)
     this.updateZones(frame, dt)
+    this.updateCues(frame)
+    this.updateMarks(frame)
     this.updateStreak(frame, dt)
     this.updateSparks(dt)
     this.updateRings(dt)
@@ -983,6 +1054,68 @@ export class Highway3D implements HighwayRenderer {
     const b = { group, mat, bar, left, right, label }
     this.brackets[i] = b
     return b
+  }
+
+  /** Each hand's next notes get their finger number floating over the key, growing as they near. */
+  private updateCues(frame: Frame): void {
+    let used = 0
+    const notes = frame.chart?.notes ?? []
+    const next: Record<Hand, number> = { L: Infinity, R: Infinity }
+    const waiting = (i: number) =>
+      notes[i].finger && (frame.noteState?.[i] ?? 'pending') === 'pending' && (frame.active?.[i] ?? true) && notes[i].startBeat - frame.beat > -0.3
+    for (let i = 0; i < notes.length; i++) {
+      if (waiting(i)) next[notes[i].hand] = Math.min(next[notes[i].hand], notes[i].startBeat)
+    }
+    for (let i = 0; i < notes.length && used < MAX_CUES; i++) {
+      const n = notes[i]
+      const ahead = n.startBeat - frame.beat
+      if (ahead > CUE_BEATS || Math.abs(n.startBeat - next[n.hand]) > 1e-6 || !waiting(i)) continue
+      const k = this.keys.get(n.pitch)
+      if (!k) continue
+      const sprite = this.cues[used++]
+      const tex = this.text(String(n.finger), 'finger', COLORS[n.hand])
+      if (sprite.material.map !== tex) {
+        sprite.material.map = tex
+        sprite.material.needsUpdate = true
+      }
+      const near = 1 - Math.max(0, Math.min(1, ahead / CUE_BEATS))
+      // Due now: a gentle beat so it reads as "this one".
+      const pulse = ahead < 0.08 ? 1 + 0.09 * Math.sin(this.time * 11) : 1
+      const size = (k.black ? 0.78 : 0.95) * (0.6 + 0.4 * near) * pulse
+      sprite.scale.set(size, size, 1)
+      sprite.position.set(k.x, (k.black ? BLACK_RISE : 0) + 0.55 + 0.25 * near, k.black ? 0.75 : 1.15)
+      sprite.material.opacity = Math.min(1, near * 2.2)
+      sprite.visible = true
+    }
+    for (let i = used; i < MAX_CUES; i++) this.cues[i].visible = false
+  }
+
+  /** A line across the highway, with the part's name, where each section of the song starts. */
+  private updateMarks(frame: Frame): void {
+    let used = 0
+    for (const s of frame.chart ? frame.sections ?? [] : []) {
+      if (used >= MAX_MARKS) break
+      const ahead = s.startBeat - frame.beat
+      if (ahead > LOOKAHEAD * 0.95 || ahead < -0.6) continue
+      const m = this.marks[used++]
+      const z = -Math.max(0, ahead) * this.beatLen
+      const far = Math.max(0, Math.min(1, (this.length * 0.95 + z) / (this.length * 0.2)))
+      const passed = ahead < 0 ? 1 + ahead / 0.6 : 1
+      const fade = far * passed
+      m.mat.color.setRGB(0.8, 0.84, 1.7).multiplyScalar(fade * (ahead < 0.15 ? 1.6 : 1))
+      m.bar.position.set(this.viewCx, 0.02, z)
+      m.bar.scale.set(this.viewW + 4, 0.1, 1)
+      const tex = this.text(`Part ${s.name}`, 'chord', '#cdd2ff')
+      if (m.label.material.map !== tex) {
+        m.label.material.map = tex
+        m.label.material.needsUpdate = true
+      }
+      m.label.material.opacity = fade
+      m.label.position.set(this.viewCx - this.viewW / 2 + 2.6, 0.55, z - 0.1)
+      m.label.scale.set(2.4, 1.2, 1)
+      m.bar.visible = m.label.visible = true
+    }
+    for (let i = used; i < MAX_MARKS; i++) this.marks[i].bar.visible = this.marks[i].label.visible = false
   }
 
   /** A band of each hand's colour along the line, over the keys that hand will play next. */

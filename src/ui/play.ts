@@ -1,3 +1,5 @@
+import { withFingering } from '../chart/fingering'
+import { sectionAt, songSections, type Section } from '../chart/sections'
 import type { Chart, Hand } from '../core/types'
 import type { Grade, Summary } from '../judge/judge'
 import type { StatEvent } from '../progress/store'
@@ -5,6 +7,7 @@ import { Highway } from '../render/highway'
 import { Session, type Mode } from '../session/session'
 import type { App } from './app'
 import { h, icon, percent, type View } from './dom'
+import { HandGuide } from './handGuide'
 
 /** What the practice tools are set to; carried from one run to the next. */
 export interface Practice {
@@ -83,7 +86,12 @@ export class PlayView implements View {
   private readonly bars: number
   private streakEl = h('span', { class: 'panel-value' }, '0')
   private accuracyEl = h('span', { class: 'panel-value good' }, '–')
-  private trackFill = h('div', { class: 'track-fill' })
+  private readonly sections: Section[]
+  private segs: { el: HTMLElement; fill: HTMLElement; score: HTMLElement }[] = []
+  private currentSection = -1
+  private handGuide: HandGuide
+  /** Shows a loop set from the section timeline on the transport bar's loop controls. */
+  private showLoop: (() => void) | null = null
   private trackLoop = h('div', { class: 'track-loop', hidden: true }, h('span', { class: 'loop-end a' }, 'A'), h('span', { class: 'loop-end b' }, 'B'))
   private clockEl = h('span', { class: 'clock' }, '0:00 / 0:00')
   private feedbackEl = h('div', { class: 'feedback', hidden: true, role: 'status' })
@@ -97,7 +105,10 @@ export class PlayView implements View {
     private app: App,
     private cfg: PlayConfig,
   ) {
+    // Every note gets a finger, including imported music and notes outside home position.
+    this.cfg = cfg = { ...cfg, chart: withFingering(cfg.chart) }
     const { chart } = cfg
+    this.sections = songSections(chart)
     this.chartHands = (['L', 'R'] as Hand[]).filter((hand) => chart.notes.some((n) => n.hand === hand))
     this.bars = Math.max(1, Math.ceil(chart.lengthBeats / chart.beatsPerBar))
     this.mode = cfg.practice?.mode ?? cfg.mode
@@ -105,6 +116,7 @@ export class PlayView implements View {
     this.tempo = cfg.practice?.tempo ?? cfg.tempoScale ?? 1
     this.loop = cfg.practice?.loop ?? null
     this.hadDevice = app.input.status.inputs.length > 0
+    this.handGuide = new HandGuide(this.chartHands)
 
     const canvas = h('canvas', { class: 'stage-canvas' })
     this.overlay.append(
@@ -130,7 +142,7 @@ export class PlayView implements View {
         { class: 'play-head' },
         h('h1', { class: 'play-title' }, chart.title),
         h('p', { class: 'play-sub' }, cfg.label),
-        h('div', { class: 'track' }, this.trackFill, this.trackLoop),
+        this.timeline(),
       ),
       h(
         'div',
@@ -145,6 +157,7 @@ export class PlayView implements View {
             h('div', { class: 'panel-row' }, icon('flame'), h('span', null, 'Streak'), this.streakEl),
           ),
         this.feedbackEl,
+        this.handGuide.el,
         this.countEl,
         this.overlay,
       ),
@@ -273,6 +286,72 @@ export class PlayView implements View {
     this.trackLoop.hidden = !this.loop
     this.trackLoop.style.left = `${((from - 1) / this.bars) * 100}%`
     this.trackLoop.style.width = `${((to - from + 1) / this.bars) * 100}%`
+    this.handGuide.setPlaying(this.mode === 'demo' ? [] : this.hands)
+    this.currentSection = -1
+    for (const seg of this.segs) {
+      seg.el.classList.remove('great', 'ok', 'weak', 'current')
+      seg.el.classList.toggle('looped', !!this.loop && seg.el.dataset.from === String(this.loop.fromBar) && seg.el.dataset.to === String(this.loop.toBar))
+      seg.score.textContent = ''
+    }
+  }
+
+  /** The song's parts along the top: progress through each, and a score once played. Click one to loop it. */
+  private timeline(): HTMLElement {
+    const track = h('div', { class: 'track' })
+    for (const s of this.sections) {
+      const fill = h('div', { class: 'seg-fill' })
+      const score = h('span', { class: 'seg-score' })
+      const bars = s.fromBar === s.toBar ? `bar ${s.fromBar}` : `bars ${s.fromBar}–${s.toBar}`
+      const el = h(
+        this.cfg.tools ? 'button' : 'div',
+        {
+          class: 'seg',
+          style: `flex-grow: ${s.toBar - s.fromBar + 1}`,
+          title: this.cfg.tools ? `Part ${s.name}, ${bars} — click to loop it` : `Part ${s.name}, ${bars}`,
+          onclick: this.cfg.tools ? () => this.loopSection(s) : undefined,
+        },
+        fill,
+        h('span', { class: 'seg-name' }, s.name),
+        score,
+      )
+      el.dataset.from = String(s.fromBar)
+      el.dataset.to = String(s.toBar)
+      this.segs.push({ el, fill, score })
+      track.append(el)
+    }
+    track.append(this.trackLoop)
+    return track
+  }
+
+  /** Loops one part of the song, or stops looping if it already is. */
+  private loopSection(s: Section): void {
+    const same = this.loop && this.loop.fromBar === s.fromBar && this.loop.toBar === s.toBar
+    this.loop = same ? null : { fromBar: s.fromBar, toBar: s.toBar }
+    this.showLoop?.()
+    this.restart()
+  }
+
+  /** How well each part went: hits out of the notes judged in it so far. */
+  private scoreSections(): void {
+    const { session } = this
+    const played = session.mode !== 'demo' && this.cfg.scored
+    this.sections.forEach((s, i) => {
+      const seg = this.segs[i]
+      let judged = 0
+      let hits = 0
+      for (const n of s.notes) {
+        if (!session.active[n]) continue
+        const state = session.noteState[n]
+        if (state === 'pending') continue
+        judged++
+        if (state !== 'miss') hits++
+      }
+      const done = played && judged > 0 && session.beat >= s.endBeat - 1e-6
+      const rate = judged ? hits / judged : 0
+      const tone = !done ? '' : rate >= 0.9 ? 'great' : rate >= 0.7 ? 'ok' : 'weak'
+      for (const t of ['great', 'ok', 'weak']) seg.el.classList.toggle(t, t === tone)
+      seg.score.textContent = done ? percent(rate) : ''
+    })
   }
 
   private finish(): void {
@@ -376,7 +455,18 @@ export class PlayView implements View {
     // In a demo nothing is the player's, so draw every note at full strength.
     const active = session.mode === 'demo' ? undefined : session.active
     if (this.hudDirty) this.streak = session.summary().streak
-    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, cut: session.cut, active, highlight, keyHands, streak: this.streak })
+    this.highway.draw({
+      beat: session.beat,
+      chart,
+      noteState: session.noteState,
+      cut: session.cut,
+      active,
+      highlight,
+      keyHands,
+      streak: this.streak,
+      sections: this.sections.length > 1 ? this.sections : undefined,
+    })
+    this.handGuide.update(chart, session.beat, session.noteState, active)
 
     const resumeCount = session.resumeCount(now)
     const counting = (session.beat < 0 && session.state === 'running' && session.mode === 'timed') || resumeCount > 0
@@ -385,12 +475,24 @@ export class PlayView implements View {
 
     const totalBeats = this.bars * chart.beatsPerBar
     const at = Math.max(0, Math.min(totalBeats, session.beat))
-    this.trackFill.style.width = `${(at / totalBeats) * 100}%`
+    const cur = sectionAt(this.sections, session.beat)
+    if (cur !== this.currentSection) {
+      this.currentSection = cur
+      this.segs.forEach((seg, i) => {
+        seg.el.classList.toggle('current', i === cur)
+        seg.fill.style.width = i < cur ? '100%' : '0%'
+      })
+      // A part just finished: show its score even if no note was judged on the way out.
+      if (this.cfg.scored) this.scoreSections()
+    }
+    const s = this.sections[cur]
+    this.segs[cur].fill.style.width = `${Math.max(0, Math.min(1, (at - s.startBeat) / (s.endBeat - s.startBeat))) * 100}%`
     const clock = `${mmss(at * session.secondsPerBeat)} / ${mmss(totalBeats * session.secondsPerBeat)}`
     if (clock !== this.lastClock) this.clockEl.textContent = this.lastClock = clock
 
     if (this.hudDirty && this.cfg.scored) {
       this.hudDirty = false
+      this.scoreSections()
       const s = session.summary()
       const judged = s.perfect + s.good + s.miss + s.wrong
       this.streakEl.textContent = String(s.streak)
@@ -443,6 +545,14 @@ export class PlayView implements View {
         icon('loop'),
         'Loop A–B',
       )
+      this.showLoop = () => {
+        loop.setAttribute('aria-pressed', String(!!this.loop))
+        range.hidden = !this.loop
+        if (this.loop) {
+          from.value = String(this.loop.fromBar)
+          to.value = String(this.loop.toBar)
+        }
+      }
       const setLoop = () => {
         const on = loop.getAttribute('aria-pressed') === 'true'
         range.hidden = !on

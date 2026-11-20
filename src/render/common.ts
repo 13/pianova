@@ -31,6 +31,8 @@ export interface Frame {
   keyHands?: Map<number, Hand>
   /** Notes hit in a row; the hit line burns brighter as it grows. */
   streak?: number
+  /** Where each part of the song starts, marked across the highway. */
+  sections?: { name: string; startBeat: number }[]
 }
 
 /** How a judged note was timed, for the word that floats up from its key. */
