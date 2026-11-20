@@ -1,5 +1,5 @@
 import type { Chart, Hand } from '../core/types'
-import type { Summary } from '../judge/judge'
+import type { Grade, Summary } from '../judge/judge'
 import type { StatEvent } from '../progress/store'
 import { Highway } from '../render/highway'
 import { Session, type Mode } from '../session/session'
@@ -16,9 +16,9 @@ export interface PlayConfig {
   tools: boolean
   /** Click the beat during a demo (for music that will be played in time). */
   metronome?: boolean
-  /** Show streak and accuracy. */
+  /** Show the practice panel (accuracy, streak) and timing feedback. */
   scored: boolean
-  /** Short tag shown before the title, e.g. "Watch" or "Practise". */
+  /** Line under the title, e.g. "Lesson 04 · Practise". */
   label: string
   onFinish(result: PlayResult): void
   onSkip?: () => void
@@ -35,8 +35,10 @@ export interface PlayResult {
 }
 
 const FINISH_DELAY_MS = 700
+const FEEDBACK_MS = 1100
+const TEMPOS = [50, 60, 70, 75, 80, 90, 100]
 
-/** The play screen: highway, heads-up display, optional practice tools, pause. */
+/** The play screen: title and progress, highway, practice panel, transport bar. */
 export class PlayView implements View {
   readonly el: HTMLElement
   private highway: Highway
@@ -44,12 +46,16 @@ export class PlayView implements View {
   private raf = 0
   private cleanups: (() => void)[] = []
   private autoHeld = new Set<number>()
+  /** Which hand's colour each sounding key should light up in. */
+  private keyHands = new Map<number, Hand>()
   private events: StatEvent[] = []
   private hudDirty = true
   private finishTimer = 0
+  private feedbackTimer = 0
   private pausedByDisconnect = false
   private hadDevice: boolean
   private hintShift = 0
+  private lastClock = ''
 
   // Current practice settings (start from the config, changed by the tools).
   private mode: Mode
@@ -59,12 +65,17 @@ export class PlayView implements View {
 
   private readonly chartHands: Hand[]
   private readonly bars: number
-  private streakEl = h('span', { class: 'hud-value' }, '0')
-  private accuracyEl = h('span', { class: 'hud-value' }, '–')
-  private progressEl = h('div', { class: 'progress-fill' })
+  private streakEl = h('span', { class: 'panel-value' }, '0')
+  private accuracyEl = h('span', { class: 'panel-value good' }, '–')
+  private trackFill = h('div', { class: 'track-fill' })
+  private trackLoop = h('div', { class: 'track-loop', hidden: true }, h('span', { class: 'loop-end a' }, 'A'), h('span', { class: 'loop-end b' }, 'B'))
+  private clockEl = h('span', { class: 'clock' }, '0:00 / 0:00')
+  private feedbackEl = h('div', { class: 'feedback', hidden: true, role: 'status' })
   private countEl = h('div', { class: 'count-in', hidden: true })
   private overlay = h('div', { class: 'overlay', hidden: true })
   private pauseReason = h('p', { class: 'muted' })
+  private pauseButton = h('button', { class: 'tbtn primary', title: 'Pause (Esc)', 'aria-label': 'Pause', onclick: () => this.togglePause() }, icon('pause'))
+  private sustainEl = h('span', { class: 'chip', title: 'Sustain pedal' }, icon('pedal'), 'Sustain')
 
   constructor(
     private app: App,
@@ -99,18 +110,28 @@ export class PlayView implements View {
       { class: 'play' },
       h(
         'div',
-        { class: 'hud' },
-        h('div', { class: 'hud-title' }, h('span', { class: 'eyebrow' }, cfg.label), h('strong', null, chart.title)),
-        h('span', { class: 'spacer' }),
-        cfg.scored && h('div', { class: 'hud-stat' }, h('span', { class: 'eyebrow' }, 'Streak'), this.streakEl),
-        cfg.scored && h('div', { class: 'hud-stat' }, h('span', { class: 'eyebrow' }, 'Accuracy'), this.accuracyEl),
-        cfg.onSkip && h('button', { class: 'btn ghost', onclick: cfg.onSkip }, 'Skip'),
-        cfg.mode !== 'demo' &&
-          h('button', { class: 'btn ghost square', title: 'Pause (Esc)', 'aria-label': 'Pause', onclick: () => this.setPaused(true) }, icon('pause')),
+        { class: 'play-head' },
+        h('h1', { class: 'play-title' }, chart.title),
+        h('p', { class: 'play-sub' }, cfg.label),
+        h('div', { class: 'track' }, this.trackFill, this.trackLoop),
       ),
-      h('div', { class: 'progress' }, this.progressEl),
-      h('div', { class: 'stage' }, canvas, this.countEl, this.overlay),
-      cfg.tools && this.toolbar(),
+      h(
+        'div',
+        { class: 'stage' },
+        canvas,
+        cfg.scored &&
+          h(
+            'div',
+            { class: 'panel' },
+            h('span', { class: 'panel-title' }, 'Practice'),
+            h('div', { class: 'panel-row' }, icon('target'), h('span', null, 'Accuracy'), this.accuracyEl),
+            h('div', { class: 'panel-row' }, icon('flame'), h('span', null, 'Streak'), this.streakEl),
+          ),
+        this.feedbackEl,
+        this.countEl,
+        this.overlay,
+      ),
+      this.transport(),
     )
 
     this.highway = new Highway(canvas)
@@ -122,6 +143,7 @@ export class PlayView implements View {
         if (on) this.session.press(pitch, app.synth.fromPerf(perfTime))
         else this.session.release(pitch)
       }),
+      app.input.onSustain((down) => this.sustainEl.classList.toggle('on', down)),
       app.input.onStatus((status) => {
         this.syncHints()
         if (status.inputs.length === 0 && this.session.state === 'running' && this.hadDevice) {
@@ -134,7 +156,7 @@ export class PlayView implements View {
       }),
     )
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Escape' && cfg.mode !== 'demo') this.setPaused(this.session.state === 'running')
+      if (e.code === 'Escape') this.togglePause()
     }
     const onHide = () => {
       if (document.hidden) this.setPaused(true)
@@ -153,6 +175,7 @@ export class PlayView implements View {
   destroy(): void {
     cancelAnimationFrame(this.raf)
     clearTimeout(this.finishTimer)
+    clearTimeout(this.feedbackTimer)
     for (const off of this.cleanups) off()
     this.highway.destroy()
     this.silenceAuto()
@@ -163,8 +186,11 @@ export class PlayView implements View {
     clearTimeout(this.finishTimer)
     this.silenceAuto()
     this.events = []
+    this.keyHands.clear()
     this.overlay.hidden = true
+    this.feedbackEl.hidden = true
     this.pausedByDisconnect = false
+    this.setPauseIcon(false)
     const { chart } = this.cfg
     const { synth } = this.app
     this.session = new Session(
@@ -179,10 +205,11 @@ export class PlayView implements View {
         latencyMs: this.app.progress.settings.latencyMs,
       },
       {
-        autoNote: (pitch, on) => {
+        autoNote: (pitch, on, hand) => {
           if (on) {
             synth.noteOn(pitch, 0.6)
             this.autoHeld.add(pitch)
+            this.keyHands.set(pitch, hand)
           } else {
             synth.noteOff(pitch)
             this.autoHeld.delete(pitch)
@@ -191,12 +218,18 @@ export class PlayView implements View {
         click: (accent) => synth.click(accent),
         judged: (index, grade, offsetMs) => {
           const note = chart.notes[index]
-          if (grade !== 'miss') this.highway.flash(note.pitch, grade)
+          if (grade !== 'miss') {
+            this.highway.flash(note.pitch, grade, note.hand)
+            this.keyHands.set(note.pitch, note.hand)
+          }
+          this.showFeedback(grade, offsetMs)
           this.events.push({ id: chart.id, pitch: note.pitch, hand: note.hand, grade, offsetMs, at: Date.now() })
           this.hudDirty = true
         },
         wrong: (pitch) => {
           this.highway.flash(pitch, 'wrong')
+          this.keyHands.delete(pitch)
+          this.showFeedback('wrong', 0)
           this.hudDirty = true
         },
         looped: () => {
@@ -210,12 +243,44 @@ export class PlayView implements View {
     )
     this.session.start(synth.now())
     this.hudDirty = true
+
+    const { from, to } = this.session.barRange
+    this.trackLoop.hidden = !this.loop
+    this.trackLoop.style.left = `${((from - 1) / this.bars) * 100}%`
+    this.trackLoop.style.width = `${((to - from + 1) / this.bars) * 100}%`
   }
 
   private finish(): void {
     const full =
       this.mode === 'timed' && this.tempo === 1 && !this.loop && this.chartHands.every((hand) => this.hands.includes(hand))
     this.cfg.onFinish({ summary: this.session.summary(), events: this.events, full, timed: this.mode === 'timed' })
+  }
+
+  /** The pill that tells you how the last note went. */
+  private showFeedback(grade: Grade | 'wrong', offsetMs: number): void {
+    if (!this.cfg.scored) return
+    const [text, tone] =
+      grade === 'wrong'
+        ? ['Wrong key', 'bad']
+        : grade === 'miss'
+          ? ['Missed', 'bad']
+          : this.mode !== 'timed'
+            ? ['Correct', 'ok']
+            : grade === 'perfect'
+              ? ['Right on time', 'ok']
+              : offsetMs < 0
+                ? ['A little early', 'warn']
+                : ['A little late', 'warn']
+    this.feedbackEl.replaceChildren(icon(tone === 'ok' ? 'checkCircle' : tone === 'warn' ? 'clock' : 'cross'), text)
+    this.feedbackEl.className = `feedback ${tone}`
+    this.feedbackEl.hidden = false
+    clearTimeout(this.feedbackTimer)
+    this.feedbackTimer = window.setTimeout(() => (this.feedbackEl.hidden = true), FEEDBACK_MS)
+  }
+
+  private togglePause(): void {
+    if (this.cfg.mode === 'demo') return
+    this.setPaused(this.session.state === 'running')
   }
 
   private setPaused(paused: boolean, reason = ''): void {
@@ -226,11 +291,18 @@ export class PlayView implements View {
       this.pauseReason.textContent = reason
       this.pauseReason.hidden = !reason
       this.overlay.hidden = false
+      this.setPauseIcon(true)
     } else if (!paused && this.session.state === 'paused') {
       this.session.resume(now)
       this.pausedByDisconnect = false
       this.overlay.hidden = true
+      this.setPauseIcon(false)
     }
+  }
+
+  private setPauseIcon(paused: boolean): void {
+    this.pauseButton.replaceChildren(icon(paused ? 'play' : 'pause'))
+    this.pauseButton.setAttribute('aria-label', paused ? 'Resume' : 'Pause')
   }
 
   private silenceAuto(): void {
@@ -251,7 +323,7 @@ export class PlayView implements View {
     const { chart } = this.cfg
     session.update(this.app.synth.now())
 
-    // Light the keys to press: what a waiting session is holding for, or what is about to land.
+    // Mark the keys to press: what a waiting session is holding for, or what is about to land.
     const highlight = new Map<number, Hand>()
     if (session.mode === 'wait') {
       for (const i of session.pendingNotes()) {
@@ -263,19 +335,22 @@ export class PlayView implements View {
         if (session.active[i] && session.noteState[i] === 'pending' && ahead > -0.2 && ahead < 0.5) highlight.set(n.pitch, n.hand)
       })
     }
-    this.highway.setHeld(this.autoHeld.size ? new Set([...this.app.input.held, ...this.autoHeld]) : this.app.input.held)
+    const held = this.autoHeld.size ? new Set([...this.app.input.held, ...this.autoHeld]) : this.app.input.held
+    for (const pitch of this.keyHands.keys()) if (!held.has(pitch)) this.keyHands.delete(pitch)
+    this.highway.setHeld(held)
     // In a demo nothing is the player's, so draw every note at full strength.
     const active = session.mode === 'demo' ? undefined : session.active
-    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, active, highlight })
+    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, active, highlight, keyHands: this.keyHands })
 
     const counting = session.beat < 0 && session.state === 'running' && session.mode === 'timed'
     this.countEl.hidden = !counting
     if (counting) this.countEl.textContent = String(Math.max(1, Math.ceil(-session.beat)))
 
-    const { from, to } = session.barRange
-    const start = (from - 1) * chart.beatsPerBar
-    const span = Math.max(1, to * chart.beatsPerBar - start)
-    this.progressEl.style.width = `${Math.max(0, Math.min(1, (session.beat - start) / span)) * 100}%`
+    const totalBeats = this.bars * chart.beatsPerBar
+    const at = Math.max(0, Math.min(totalBeats, session.beat))
+    this.trackFill.style.width = `${(at / totalBeats) * 100}%`
+    const clock = `${mmss(at * session.secondsPerBeat)} / ${mmss(totalBeats * session.secondsPerBeat)}`
+    if (clock !== this.lastClock) this.clockEl.textContent = this.lastClock = clock
 
     if (this.hudDirty && this.cfg.scored) {
       this.hudDirty = false
@@ -283,82 +358,110 @@ export class PlayView implements View {
       const judged = s.perfect + s.good + s.miss + s.wrong
       this.streakEl.textContent = String(s.streak)
       // Accuracy so far: only what has been played, so it does not start at 0%.
-      const soFar = judged ? (s.perfect + s.good * 0.7) / judged : 1
-      this.accuracyEl.textContent = judged ? percent(soFar) : '–'
+      this.accuracyEl.textContent = judged ? percent((s.perfect + s.good * 0.7) / judged) : '–'
     }
   }
 
-  // ---- practice tools -------------------------------------------------------
+  // ---- transport bar --------------------------------------------------------
 
-  private toolbar(): HTMLElement {
+  private transport(): HTMLElement {
+    const { cfg } = this
     const apply = () => this.restart()
-
-    const tempoValue = h('output', null, percent(this.tempo))
-    const tempo = h('input', {
-      type: 'range',
-      min: '50',
-      max: '100',
-      step: '5',
-      value: String(Math.round(this.tempo * 100)),
-      'aria-label': 'Tempo',
-      oninput: () => (tempoValue.textContent = `${tempo.value}%`),
-      onchange: () => {
-        this.tempo = Number(tempo.value) / 100
-        apply()
-      },
-    })
-
-    const wait = h('input', {
-      type: 'checkbox',
-      checked: this.mode === 'wait',
-      onchange: () => {
-        this.mode = wait.checked ? 'wait' : 'timed'
-        apply()
-      },
-    })
-
-    const handChoices: [string, Hand[]][] = [
-      ['Both', this.chartHands],
-      ['Left', ['L']],
-      ['Right', ['R']],
+    const controls: (HTMLElement | false | undefined)[] = [
+      cfg.mode !== 'demo' && this.pauseButton,
+      h('button', { class: 'tbtn', title: 'Restart', 'aria-label': 'Restart', onclick: apply }, icon('restart')),
+      h('span', { class: 'divider' }),
+      this.clockEl,
     ]
-    const handButtons = handChoices.map(([label, hands]) =>
-      h(
-        'button',
+
+    if (cfg.tools) {
+      const tempo = h(
+        'select',
         {
-          class: 'seg',
-          'aria-pressed': String(hands.join() === this.hands.join()),
-          onclick: () => {
-            this.hands = hands
-            handButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(handChoices[i][1].join() === hands.join())))
+          class: 'chip',
+          'aria-label': 'Tempo',
+          onchange: () => {
+            this.tempo = Number(tempo.value) / 100
             apply()
           },
         },
-        label,
-      ),
-    )
+        TEMPOS.map((t) => h('option', { value: String(t), selected: t === Math.round(this.tempo * 100) }, `Tempo ${t}%`)),
+      )
 
-    const barInput = (value: number) =>
-      h('input', { type: 'number', min: '1', max: String(this.bars), value: String(value), class: 'bar-input', disabled: true, onchange: () => setLoop() })
-    const from = barInput(1)
-    const to = barInput(Math.min(this.bars, 2))
-    const loop = h('input', { type: 'checkbox', onchange: () => setLoop() })
-    const setLoop = () => {
-      from.disabled = to.disabled = !loop.checked
-      const clamp = (input: HTMLInputElement) => Math.max(1, Math.min(this.bars, Math.round(Number(input.value)) || 1))
-      this.loop = loop.checked ? { fromBar: clamp(from), toBar: clamp(to) } : null
-      apply()
+      const barInput = (value: number, label: string) =>
+        h('input', { type: 'number', min: '1', max: String(this.bars), value: String(value), class: 'bar-input', 'aria-label': label, onchange: () => setLoop() })
+      const from = barInput(1, 'Loop from bar')
+      const to = barInput(Math.min(this.bars, 2), 'Loop to bar')
+      const range = h('span', { class: 'loop-range', hidden: true }, 'bars', from, '–', to, h('span', { class: 'muted' }, `of ${this.bars}`))
+      const loop = h(
+        'button',
+        {
+          class: 'chip toggle',
+          'aria-pressed': 'false',
+          onclick: () => {
+            loop.setAttribute('aria-pressed', String(loop.getAttribute('aria-pressed') !== 'true'))
+            setLoop()
+          },
+        },
+        icon('loop'),
+        'Loop A–B',
+      )
+      const setLoop = () => {
+        const on = loop.getAttribute('aria-pressed') === 'true'
+        range.hidden = !on
+        const clamp = (input: HTMLInputElement) => Math.max(1, Math.min(this.bars, Math.round(Number(input.value)) || 1))
+        this.loop = on ? { fromBar: clamp(from), toBar: clamp(to) } : null
+        apply()
+      }
+
+      const handChoices: [string, Hand[]][] = [
+        ['Both hands', this.chartHands],
+        ['Left hand', ['L']],
+        ['Right hand', ['R']],
+      ]
+      const hands = h(
+        'select',
+        {
+          class: 'chip',
+          'aria-label': 'Hands',
+          onchange: () => {
+            this.hands = handChoices[Number(hands.value)][1]
+            apply()
+          },
+        },
+        handChoices.map(([label, value], i) => h('option', { value: String(i), selected: value.join() === this.hands.join() }, label)),
+      )
+
+      const wait = h(
+        'button',
+        {
+          class: 'chip toggle',
+          'aria-pressed': String(this.mode === 'wait'),
+          title: 'The music waits until you press the right key',
+          onclick: () => {
+            this.mode = this.mode === 'wait' ? 'timed' : 'wait'
+            wait.setAttribute('aria-pressed', String(this.mode === 'wait'))
+            apply()
+          },
+        },
+        icon('hourglass'),
+        'Wait for me',
+      )
+
+      controls.push(h('span', { class: 'divider' }), tempo, loop, range, this.chartHands.length > 1 && hands, wait)
     }
 
-    return h(
-      'div',
-      { class: 'tools' },
-      h('label', { class: 'tool' }, h('span', { class: 'eyebrow' }, 'Tempo'), tempo, tempoValue),
-      h('label', { class: 'tool check', title: 'The music waits until you press the right key' }, wait, 'Wait for me'),
-      this.chartHands.length > 1 && h('div', { class: 'tool' }, h('span', { class: 'eyebrow' }, 'Hands'), h('div', { class: 'segs' }, handButtons)),
-      h('div', { class: 'tool' }, h('label', { class: 'check' }, loop, 'Loop bars'), from, h('span', { class: 'muted' }, 'to'), to, h('span', { class: 'muted' }, `of ${this.bars}`)),
+    controls.push(
       h('span', { class: 'spacer' }),
-      h('button', { class: 'btn', onclick: apply }, 'Restart'),
+      cfg.onSkip && h('button', { class: 'chip', onclick: cfg.onSkip }, 'Skip'),
+      h('span', { class: 'divider' }),
+      this.sustainEl,
     )
+    return h('div', { class: 'transport' }, controls)
   }
+}
+
+function mmss(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }

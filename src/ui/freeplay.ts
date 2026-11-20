@@ -4,6 +4,7 @@ import { PIECES } from '../curriculum'
 import { starsFor } from '../judge/judge'
 import type { App } from './app'
 import { h, icon, percent, stars, type View } from './dom'
+import { midiPill } from './midiPill'
 import { PlayView, type PlayResult } from './play'
 import { resultsCard } from './results'
 
@@ -70,6 +71,7 @@ export function freePlayView(app: App): View {
 
 function playPiece(app: App, chart: Chart, pieceId: string | null): View {
   const body = h('div', { class: 'lesson-body' })
+  const pill = midiPill(app)
   let current: View | null = null
   const mount = (view: View) => {
     current?.destroy?.()
@@ -85,7 +87,7 @@ function playPiece(app: App, chart: Chart, pieceId: string | null): View {
         mode: 'timed',
         tools: true,
         scored: true,
-        label: 'Free play',
+        label: pieceId ? `Free play • ${PIECES.find((p) => p.id === pieceId)?.composer ?? ''}` : 'Free play • Imported file',
         onExit: () => app.goFreePlay(),
         onFinish: finish,
       }),
@@ -126,7 +128,8 @@ function playPiece(app: App, chart: Chart, pieceId: string | null): View {
       'header',
       { class: 'topbar' },
       h('button', { class: 'btn ghost', onclick: () => app.goFreePlay() }, icon('back'), 'Free play'),
-      h('strong', null, chart.title),
+      h('span', { class: 'spacer' }),
+      pill.el,
     ),
     body,
   )
@@ -136,6 +139,7 @@ function playPiece(app: App, chart: Chart, pieceId: string | null): View {
     el,
     destroy() {
       current?.destroy?.()
+      pill.destroy?.()
       app.input.allowOctaveShift(false)
     },
   }

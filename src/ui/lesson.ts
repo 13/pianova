@@ -5,6 +5,7 @@ import { starsFor } from '../judge/judge'
 import { Highway } from '../render/highway'
 import type { App } from './app'
 import { h, icon, type View } from './dom'
+import { midiPill } from './midiPill'
 import { PlayView, type PlayResult } from './play'
 import { resultsCard } from './results'
 
@@ -18,6 +19,7 @@ export class LessonView implements View {
   private body = h('div', { class: 'lesson-body' })
   private dots = h('ol', { class: 'steps' })
   private stepView: View | null = null
+  private pill: View
   private index = 0
 
   constructor(
@@ -25,6 +27,7 @@ export class LessonView implements View {
     private lesson: Lesson,
   ) {
     const unit = UNITS.find((u) => u.n === lesson.unit)!
+    this.pill = midiPill(app)
     this.el = h(
       'div',
       { class: 'screen lesson' },
@@ -35,6 +38,7 @@ export class LessonView implements View {
         h('div', { class: 'lesson-title' }, h('span', { class: 'eyebrow' }, `Unit ${unit.n} · ${unit.title}`), h('strong', null, lesson.title)),
         h('span', { class: 'spacer' }),
         this.dots,
+        this.pill.el,
       ),
       this.body,
     )
@@ -43,6 +47,7 @@ export class LessonView implements View {
 
   destroy(): void {
     this.stepView?.destroy?.()
+    this.pill.destroy?.()
   }
 
   private mount(view: View): void {
@@ -77,7 +82,7 @@ export class LessonView implements View {
         tools: step.type === 'drill',
         metronome: timedLesson,
         scored: step.type === 'perform',
-        label: slow ? `${STEP_NAMES[step.type]} · slower` : STEP_NAMES[step.type],
+        label: `Lesson ${String(LESSONS.indexOf(this.lesson) + 1).padStart(2, '0')} • ${STEP_NAMES[step.type]}${slow ? ', slower' : ''}`,
         onSkip: step.type === 'perform' ? undefined : next,
         onExit: () => this.app.goPath(),
         ...overrides,
