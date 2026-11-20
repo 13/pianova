@@ -253,7 +253,9 @@ export class PlayView implements View {
       })
     }
     this.highway.setHeld(this.autoHeld.size ? new Set([...this.app.input.held, ...this.autoHeld]) : this.app.input.held)
-    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, active: session.active, highlight })
+    // In a demo nothing is the player's, so draw every note at full strength.
+    const active = session.mode === 'demo' ? undefined : session.active
+    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, active, highlight })
 
     const counting = session.beat < 0 && session.state === 'running' && session.mode === 'timed'
     this.countEl.hidden = !counting

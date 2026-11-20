@@ -107,7 +107,7 @@ export class Highway {
     const kbW = Math.min(this.w - 32, 1500)
     const whiteW = kbW / this.whiteCount
     const keyH = Math.max(90, Math.min(this.h * 0.24, whiteW * 4.6))
-    return { kbW, whiteW, keyH, left: (this.w - kbW) / 2, hitY: this.h - keyH - 10, horizon: Math.max(24, this.h * 0.07) }
+    return { kbW, whiteW, keyH, left: (this.w - kbW) / 2, hitY: this.h - keyH - 22, horizon: Math.max(24, this.h * 0.07) }
   }
 
   /** Centre x and width of a key at the keyboard. */

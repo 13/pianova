@@ -160,6 +160,17 @@ describe('Session, wait', () => {
     expect(s.noteState[0]).toBe('perfect')
     expect(log).not.toContain('click')
   })
+  it('ignores presses for a note that is still more than a beat away', () => {
+    const late = compileChart({ id: 'l', title: 'L', bpm: 60, R: '-:3 C4' })
+    const { s, log } = make({ chart: late, mode: 'wait' })
+    s.start(0)
+    s.press(60, 0)
+    expect(s.noteState[0]).toBe('pending')
+    expect(log).toEqual([])
+    run(s, 0, 2)
+    s.press(60, 2)
+    expect(s.noteState[0]).toBe('perfect')
+  })
   it('reports which notes it is waiting for', () => {
     const chord = compileChart({ id: 'c', title: 'C', bpm: 60, R: 'C4 [C4 E4 G4]' })
     const { s } = make({ chart: chord, mode: 'wait' })

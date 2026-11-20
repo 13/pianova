@@ -33,6 +33,8 @@ const MAX_FRAME_S = 0.25
 /** Auto-played notes release slightly early so repeated notes re-strike. */
 const AUTO_LENGTH = 0.95
 const EPS = 1e-9
+/** In wait mode a note can be played once it is this close to the line. */
+const WAIT_REACH_BEATS = 1
 
 interface AutoEvent {
   beat: number
@@ -195,6 +197,11 @@ export class Session {
     let delta = now - this.lastNow
     if (this.mode !== 'timed' || Math.abs(delta) > MAX_FRAME_S) delta = 0
     const time = this.judgeTime(this.beat + delta / this.secondsPerBeat)
+    if (this.mode === 'wait') {
+      // Only the note that is arriving can be played; pressing far ahead does nothing.
+      const pending = this.judge.pendingGroup()
+      if (pending.length && this.chart.notes[this.judged[pending[0]]].startBeat - this.beat > WAIT_REACH_BEATS + EPS) return
+    }
     // Noodling during the count-in is not a mistake.
     if (this.mode === 'timed' && time < this.rangeStart * this.secondsPerBeat - GOOD_MS / 1000) return
     const result = this.judge.press(pitch, time)
