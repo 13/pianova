@@ -64,6 +64,8 @@ export class PlayView implements View {
   private keyHands = new Map<number, Hand>()
   private events: StatEvent[] = []
   private hudDirty = true
+  /** Notes hit in a row, refreshed with the HUD. */
+  private streak = 0
   private finishTimer = 0
   private feedbackTimer = 0
   private pausedByDisconnect = false
@@ -242,10 +244,8 @@ export class PlayView implements View {
         },
         judged: (index, grade, offsetMs) => {
           const note = chart.notes[index]
-          if (grade !== 'miss') {
-            this.highway.flash(note.pitch, grade, note.hand)
-            this.keyHands.set(note.pitch, note.hand)
-          }
+          this.highway.flash(note.pitch, grade, note.hand, { offsetMs, timed: this.mode === 'timed' })
+          if (grade !== 'miss') this.keyHands.set(note.pitch, note.hand)
           this.showFeedback(grade, offsetMs)
           this.events.push({ id: chart.id, pitch: note.pitch, hand: note.hand, grade, offsetMs, at: Date.now() })
           this.hudDirty = true
@@ -375,7 +375,8 @@ export class PlayView implements View {
     this.highway.setHeld(held)
     // In a demo nothing is the player's, so draw every note at full strength.
     const active = session.mode === 'demo' ? undefined : session.active
-    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, cut: session.cut, active, highlight, keyHands })
+    if (this.hudDirty) this.streak = session.summary().streak
+    this.highway.draw({ beat: session.beat, chart, noteState: session.noteState, cut: session.cut, active, highlight, keyHands, streak: this.streak })
 
     const resumeCount = session.resumeCount(now)
     const counting = (session.beat < 0 && session.state === 'running' && session.mode === 'timed') || resumeCount > 0

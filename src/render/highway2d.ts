@@ -71,6 +71,7 @@ export class Highway2D implements HighwayRenderer {
 
   /** A burst of sparks where a key met the line. */
   flash(pitch: number, kind: Grade | 'wrong', hand?: Hand): void {
+    if (kind === 'miss') return
     const color = kind === 'wrong' ? COLORS.wrong : hand ? COLORS[hand] : COLORS.neutral
     this.burst(pitch, color, kind === 'perfect' ? 16 : kind === 'wrong' ? 6 : 9)
   }

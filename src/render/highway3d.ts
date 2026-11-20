@@ -9,7 +9,8 @@ import { isBlack, midiToLetter } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
-import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
+import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, type FlashTiming, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
+import { chordGroups, focusRange, handZones, streakMilestone, timingLabel, type ChordGroup, type Tone } from './staging'
 
 // World units: one white key is 1 wide. x runs along the keyboard, y is up, and the
 // hit line is at z = 0 with the keys towards the player (+z) and the music beyond (-z).
@@ -39,6 +40,25 @@ const MAX_RINGS = 24
 const MAX_GLOWS = 12
 const DUST = 160
 
+/** The camera never frames fewer white keys than this (three octaves). */
+const MIN_VIEW = 22
+/** White keys left spare either side of the music the camera follows. */
+const VIEW_MARGIN = 2.5
+/** The keyboard takes at most this share of the screen height; when zoomed in, its front runs off the bottom. */
+const MAX_KEYS_SHARE = 0.34
+/** Long notes (this many beats or more) are drawn as a head with a trail. */
+const LONG_BEATS = 1.5
+const HEAD_LEN = 0.85
+/** Lanes start to light this many beats before their note arrives. */
+const APPROACH_BEATS = 2.5
+const MAX_APPROACH = 12
+const MAX_BRACKETS = 10
+const MAX_POPUPS = 16
+const POPUP_LIFE = 0.85
+/** How far ahead (in beats) hand zones and the camera look. */
+const ZONE_BEATS = 4
+const TONE_COLORS: Record<Tone | 'gold', string> = { ok: '#7dffb6', warn: '#ffc46b', bad: '#a3abcf', gold: '#ffe27a' }
+
 interface KeyObj {
   pitch: number
   black: boolean
@@ -60,7 +80,36 @@ interface NoteSlot {
   mesh: THREE.Mesh
   refl: THREE.Mesh
   uniforms: NoteUniforms
+  /** The thinner body of a long note, behind its head. */
+  trail: THREE.Mesh
+  trailUniforms: NoteUniforms
   label: THREE.Sprite
+}
+
+interface Bracket {
+  group: THREE.Group
+  mat: THREE.MeshBasicMaterial
+  bar: THREE.Mesh
+  left: THREE.Mesh
+  right: THREE.Mesh
+  label: THREE.Sprite
+}
+
+interface Popup {
+  sprite: THREE.Sprite
+  age: number
+  life: number
+  alive: boolean
+  pitch: number
+  rise: number
+  size: number
+}
+
+interface Zone {
+  strip: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>
+  lo: number
+  hi: number
+  level: number
 }
 
 interface NoteUniforms {
@@ -72,6 +121,9 @@ interface NoteUniforms {
   uGlow: THREE.IUniform<number>
   uFar: THREE.IUniform<number>
   uReflect: THREE.IUniform<number>
+  /** 1 while a long note's trail is being held: light runs along it. */
+  uFlow: THREE.IUniform<number>
+  uTime: THREE.IUniform<number>
 }
 
 interface Spark {
@@ -139,6 +191,24 @@ export class Highway3D implements HighwayRenderer {
   private glows = new Map<number, { sprite: THREE.Sprite; level: number; color: THREE.Color }>()
   private glowTexture = radialTexture()
   private dust: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>
+
+  /** White keys framed by the camera and their centre, eased towards a target that follows the music. */
+  private viewW = 0
+  private viewCx = 0
+  private targetW = 0
+  private targetCx = 0
+  private chart: Chart | null = null
+  private chords: ChordGroup[] = []
+  private brackets: Bracket[] = []
+  private bracketGeo = new THREE.BoxGeometry(1, 1, 1)
+  private popups: Popup[] = []
+  private zones: Record<Hand, Zone>
+  private lastStreak = 0
+  /** Smoothed 0..1 from the streak: how hot the hit line burns. */
+  private heat = 0
+  /** Brief flash along the hit line after a streak milestone, 0..1. */
+  private surge = 0
+  private timeUniform = { value: 0 }
 
   private textures = new Map<string, THREE.CanvasTexture>()
   private last = performance.now()
@@ -218,6 +288,24 @@ export class Highway3D implements HighwayRenderer {
       this.rings.push({ mesh, age: 0, life: 0.5, alive: false })
     }
 
+    for (let i = 0; i < MAX_POPUPS; i++) {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, toneMapped: false }))
+      sprite.visible = false
+      sprite.renderOrder = 10
+      scene.add(sprite)
+      this.popups.push({ sprite, age: 0, life: POPUP_LIFE, alive: false, pitch: 0, rise: 1.4, size: 1 })
+    }
+    const zone = (): Zone => {
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), stripMaterial())
+      strip.renderOrder = 6
+      strip.visible = false
+      scene.add(strip)
+      return { strip, lo: 0, hi: 0, level: 0 }
+    }
+    this.zones = { L: zone(), R: zone() }
+    this.zones.L.strip.material.uniforms.uColor.value.set(COLORS.L)
+    this.zones.R.strip.material.uniforms.uColor.value.set(COLORS.R)
+
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(canvas)
     this.buildKeys()
@@ -244,6 +332,8 @@ export class Highway3D implements HighwayRenderer {
   }
 
   setRange(chart: Chart | null): void {
+    this.chart = chart
+    this.chords = chart ? chordGroups(chart) : []
     const { lo, hi } = keyRange(chart)
     if (lo === this.lo && hi === this.hi) return
     this.lo = lo
@@ -262,10 +352,15 @@ export class Highway3D implements HighwayRenderer {
     this.held = held
   }
 
-  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand): void {
+  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand, timing?: FlashTiming): void {
+    if (timing && kind !== 'wrong') {
+      const label = timingLabel(kind, timing.offsetMs, timing.timed)
+      this.popup(pitch, label.text, kind === 'perfect' && timing.timed ? 'gold' : label.tone)
+    }
+    if (kind === 'miss') return
     const color = kind === 'wrong' ? COLORS.wrong : hand ? COLORS[hand] : COLORS.neutral
     this.burst(pitch, color, kind === 'perfect' ? 26 : kind === 'wrong' ? 10 : 14)
-    if (kind !== 'wrong' && kind !== 'miss') this.ring(pitch, color, kind === 'perfect' ? 1.25 : 0.9)
+    if (kind !== 'wrong') this.ring(pitch, color, kind === 'perfect' ? 1.25 : 0.9)
   }
 
   // ---- setup -----------------------------------------------------------------
@@ -312,6 +407,7 @@ export class Highway3D implements HighwayRenderer {
     let whites = 0
     for (let p = this.lo; p <= this.hi; p++) if (!isBlack(p)) whites++
     this.whites = whites
+    this.viewW = 0
 
     for (let p = this.lo; p <= this.hi; p++) {
       const black = isBlack(p)
@@ -358,46 +454,11 @@ export class Highway3D implements HighwayRenderer {
     this.bed.position.set(whites / 2, -KEY_THICK + 0.05, KEY_LEN / 2 + 0.1)
   }
 
-  /** Places the camera so the keyboard spans the screen and sits on its bottom edge. */
+  /** Sizes everything that depends on the keyboard's range rather than on the camera. */
   private layout(): void {
     if (this.w === 0) return
     const W = this.whites
     const cx = W / 2
-    const aspect = this.w / this.h
-    const tanH = TAN_H
-    this.tanV = tanH / aspect
-
-    const aimZ = KEY_LEN * 0.5
-    const dist = W / 2 / (OVERRUN * tanH) + (KEY_LEN - aimZ) * Math.cos(PITCH)
-    const cam = this.camera
-    cam.position.set(cx, dist * Math.sin(PITCH), aimZ + dist * Math.cos(PITCH))
-    cam.up.set(0, 1, 0)
-    cam.lookAt(cx, 0, aimZ)
-    cam.aspect = aspect
-    cam.fov = (2 * Math.atan(this.tanV) * 180) / Math.PI
-    cam.far = dist * 12
-    cam.updateProjectionMatrix()
-    cam.updateMatrixWorld()
-
-    // Shift the lens so the front edge of the keyboard sits on the bottom of the screen.
-    const front = new THREE.Vector3(cx, -KEY_THICK, KEY_LEN + 0.15).project(cam)
-    cam.projectionMatrix.elements[9] = front.y + 1
-    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert()
-
-    // The highway runs back to wherever the top of the screen meets the floor.
-    const ray = new THREE.Raycaster()
-    ray.setFromCamera(new THREE.Vector2(0, 1), cam)
-    const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())
-    const far = hit && hit.z < 0 ? -hit.z : W * 4
-    this.length = Math.min(W * 4, Math.max(W * 0.6, far * 1.02))
-    this.beatLen = this.length / LOOKAHEAD
-
-    const span = W * 6
-    this.floor.scale.set(span, this.length + 2, 1)
-    this.floor.position.set(cx, -0.012, -(this.length + 2) / 2 + 0.5)
-    const fu = this.floor.material.uniforms
-    fu.uLength.value = this.length
-    fu.uBeatLen.value = this.beatLen
     // Index (among white-key boundaries) of the first C boundary, for stronger lane lines.
     let ci = 0
     for (let p = this.lo, i = 0; p <= this.hi; p++) {
@@ -408,7 +469,7 @@ export class Highway3D implements HighwayRenderer {
       }
       i++
     }
-    fu.uCIndex.value = ci
+    this.floor.material.uniforms.uCIndex.value = ci
 
     this.hitLine.scale.set(W + 4, 1, 1)
     this.hitLine.position.set(cx, 0.03, -0.04)
@@ -428,26 +489,121 @@ export class Highway3D implements HighwayRenderer {
     sc.far = 40
     sc.updateProjectionMatrix()
 
+    if (!this.viewW) this.resetView()
+    this.aim()
+    this.labelKey = ''
+  }
+
+  private resetView(): void {
+    this.viewW = this.targetW = this.whites
+    this.viewCx = this.targetCx = this.whites / 2
+  }
+
+  /**
+   * Places the camera to frame `viewW` white keys around `viewCx`, with the front of the
+   * keyboard on the bottom edge of the screen (or below it, when zoomed in), and sizes
+   * the highway to reach the top of the screen.
+   */
+  private aim(): void {
+    const W = this.viewW
+    const cx = this.viewCx
+    const aspect = this.w / this.h
+    const tanH = TAN_H
+    this.tanV = tanH / aspect
+
+    const aimZ = KEY_LEN * 0.5
+    const dist = W / 2 / (OVERRUN * tanH) + (KEY_LEN - aimZ) * Math.cos(PITCH)
+    const cam = this.camera
+    cam.position.set(cx, dist * Math.sin(PITCH), aimZ + dist * Math.cos(PITCH))
+    cam.up.set(0, 1, 0)
+    cam.lookAt(cx, 0, aimZ)
+    cam.aspect = aspect
+    cam.fov = (2 * Math.atan(this.tanV) * 180) / Math.PI
+    cam.far = dist * 12
+    cam.updateProjectionMatrix()
+    cam.updateMatrixWorld()
+
+    // Shift the lens so the front edge of the keyboard sits on the bottom of the screen,
+    // unless that would let the keys fill too much of it.
+    const front = tmpV.set(cx, -KEY_THICK, KEY_LEN + 0.15).project(cam).y
+    const line = tmpV.set(cx, 0, 0).project(cam).y
+    const maxLine = -1 + 2 * MAX_KEYS_SHARE
+    cam.projectionMatrix.elements[9] = Math.max(front + 1, line - maxLine)
+    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert()
+
+    // The highway runs back to wherever the top of the screen meets the floor.
+    raycaster.setFromCamera(tmpV2.set(0, 1), cam)
+    const hit = raycaster.ray.intersectPlane(floorPlane, tmpV)
+    const far = hit && hit.z < 0 ? -hit.z : W * 4
+    this.length = Math.min(W * 4, Math.max(W * 0.6, far * 1.02))
+    this.beatLen = this.length / LOOKAHEAD
+
+    this.floor.scale.set(this.whites * 6, this.length + 2, 1)
+    this.floor.position.set(this.whites / 2, -0.012, -(this.length + 2) / 2 + 0.5)
+    const fu = this.floor.material.uniforms
+    fu.uLength.value = this.length
+    fu.uBeatLen.value = this.beatLen
+    fu.uView.value.set(cx, W)
+
     this.sparkPoints.material.uniforms.uScale.value = (this.h * this.renderer.getPixelRatio()) / (2 * this.tanV)
     this.dust.material.uniforms.uScale.value = this.sparkPoints.material.uniforms.uScale.value
     this.dust.material.uniforms.uBox.value.set(W, 7, this.length)
-    this.dust.position.set(0, 0, 0)
-    this.labelKey = ''
+    this.dust.position.set(cx - W / 2, 0, 0)
+  }
+
+  /** Eases the camera towards the keys the music needs next. */
+  private follow(frame: Frame, dt: number): void {
+    const W = this.whites
+    const chart = frame.chart
+    const range = chart ? focusRange(chart, frame.beat, LOOKAHEAD * 0.8) : null
+    if (!chart) {
+      this.targetW = W
+      this.targetCx = W / 2
+    } else if (range) {
+      const x0 = this.keyX(Math.max(this.lo, range.lo)) - 0.5 - VIEW_MARGIN
+      const x1 = this.keyX(Math.min(this.hi, range.hi)) + 0.5 + VIEW_MARGIN
+      this.targetW = Math.min(W, Math.max(MIN_VIEW, x1 - x0))
+      const half = this.targetW / 2
+      this.targetCx = Math.min(W - half, Math.max(half, (x0 + x1) / 2))
+    }
+    // Slow and smooth, so the keys never seem to slide out from under the hands.
+    const k = 1 - Math.exp(-dt * 1.6)
+    const before = this.viewW + this.viewCx * 1000
+    this.viewW += (this.targetW - this.viewW) * k
+    this.viewCx += (this.targetCx - this.viewCx) * k
+    if (Math.abs(this.viewW + this.viewCx * 1000 - before) > 1e-5) this.aim()
   }
 
   // ---- labels ----------------------------------------------------------------
 
   /** A small transparent texture of some text, shared by every key or note that shows it. */
-  private text(text: string, style: 'c' | 'letter' | 'hint' | 'hintDark' | 'note'): THREE.CanvasTexture {
-    const id = `${style}|${text}`
+  private text(text: string, style: 'c' | 'letter' | 'hint' | 'hintDark' | 'note' | 'chord' | 'pop', color = '#ffffff'): THREE.CanvasTexture {
+    const id = `${style}|${color}|${text}`
     const cached = this.textures.get(id)
     if (cached) return cached
     const c = document.createElement('canvas')
-    c.width = c.height = 128
+    const wide = style === 'chord' || style === 'pop'
+    c.width = wide ? 256 : 128
+    c.height = 128
     const g = c.getContext('2d')!
     g.textAlign = 'center'
     g.textBaseline = 'middle'
-    if (style === 'note') {
+    if (wide) {
+      // Bold, with a dark outline and a glow of its own colour so it reads over anything.
+      g.font = `${style === 'pop' ? 'italic 900' : '800'} ${style === 'pop' ? 62 : 70}px ${FONT}`
+      const size = g.measureText(text).width
+      if (size > 236) g.font = g.font.replace(/\d+px/, `${Math.floor((style === 'pop' ? 62 : 70) * (236 / size))}px`)
+      g.lineJoin = 'round'
+      g.lineWidth = 10
+      g.strokeStyle = 'rgba(4, 6, 20, 0.85)'
+      g.strokeText(text, 128, 66)
+      g.shadowColor = color
+      g.shadowBlur = 16
+      g.fillStyle = color
+      g.fillText(text, 128, 66)
+      g.shadowBlur = 0
+      g.fillText(text, 128, 66)
+    } else if (style === 'note') {
       g.font = `800 84px ${FONT}`
       g.shadowColor = 'rgba(255, 255, 255, 0.8)'
       g.shadowBlur = 10
@@ -462,7 +618,7 @@ export class Highway3D implements HighwayRenderer {
       g.font = `700 50px ${FONT}`
       g.fillStyle = style === 'hint' ? 'rgba(255, 255, 255, 0.62)' : 'rgba(64, 60, 54, 0.55)'
     }
-    g.fillText(text, 64, 68)
+    if (!wide) g.fillText(text, 64, 68)
     const t = new THREE.CanvasTexture(c)
     t.colorSpace = THREE.SRGBColorSpace
     t.anisotropy = 4
@@ -472,7 +628,7 @@ export class Highway3D implements HighwayRenderer {
 
   /** Letters and computer-key hints printed on the key tops, rebuilt when they would change. */
   private syncKeyLabels(): void {
-    const keyPx = this.w / this.whites
+    const keyPx = this.w / Math.max(1, this.viewW || this.whites)
     const key = [this.labels, this.keyHints, this.hintShift, keyLabelsVersion(), keyPx >= 30, this.lo, this.hi].join('|')
     if (key === this.labelKey) return
     this.labelKey = key
@@ -515,15 +671,25 @@ export class Highway3D implements HighwayRenderer {
     const dt = Math.min(0.05, (now - this.last) / 1000)
     this.last = now
     this.time += dt
+    this.timeUniform.value = this.time
+    if ((frame.chart ?? null) !== this.chart) {
+      this.chart = frame.chart ?? null
+      this.chords = this.chart ? chordGroups(this.chart) : []
+    }
 
+    this.follow(frame, dt)
     this.syncKeyLabels()
     const sounding = new Map<number, string>()
     if (frame.chart) this.updateNotes(frame, frame.chart, now, sounding)
     else this.hideNotes(0)
+    this.updateBrackets(frame)
     this.updateKeys(frame, dt, sounding)
     this.updateFloor(frame, sounding)
+    this.updateZones(frame, dt)
+    this.updateStreak(frame, dt)
     this.updateSparks(dt)
     this.updateRings(dt)
+    this.updatePopups(dt)
     this.dust.material.uniforms.uTime.value = this.time
     this.composer.render(dt)
   }
@@ -556,23 +722,46 @@ export class Highway3D implements HighwayRenderer {
       const slot = this.slot(used++)
       const u = slot.uniforms
       const color = state === 'miss' ? COLORS.miss : COLORS[n.hand]
+      const alpha = state === 'miss' ? 0.4 : cut ? 0.3 : active ? 1 : 0.5
+      const glow = state === 'miss' ? 0 : isSounding ? 1 : 0
       u.uColor.value.set(color)
       u.uRim.value.set(lighten(color, 0.55))
-      u.uAlpha.value = state === 'miss' ? 0.4 : cut ? 0.3 : active ? 1 : 0.5
-      u.uGlow.value = state === 'miss' ? 0 : isSounding ? 1 : 0
+      u.uAlpha.value = alpha
+      u.uGlow.value = glow
       u.uFar.value = this.length
       const h = black ? NOTE_H + 0.12 : NOTE_H
-      u.uSize.value.set(width, h, len)
-      const y = black ? 0.12 + h / 2 : h / 2
-      slot.mesh.position.set(x, y, zNear - len / 2)
-      slot.mesh.scale.set(width, h, len)
+      const base = black ? 0.12 : 0
+
+      // Long notes: a solid head, then a slim glowing trail that drains into the line as it is held.
+      const long = n.durationBeats >= LONG_BEATS && len > HEAD_LEN * 1.6
+      const headLen = long ? (ahead > 0 ? HEAD_LEN : Math.min(0.4, len)) : len
+      u.uSize.value.set(width, h, headLen)
+      slot.mesh.position.set(x, base + h / 2, zNear - headLen / 2)
+      slot.mesh.scale.set(width, h, headLen)
       slot.refl.position.copy(slot.mesh.position)
       slot.refl.scale.copy(slot.mesh.scale)
       slot.mesh.visible = slot.refl.visible = true
+      slot.trail.visible = long
+      if (long) {
+        const t = slot.trailUniforms
+        const tw = width * 0.42
+        const th = 0.14
+        const tLen = len - headLen + 0.1
+        t.uColor.value.set(color)
+        t.uRim.value.set(lighten(color, 0.6))
+        t.uAlpha.value = alpha * 0.8
+        t.uGlow.value = glow * 0.8
+        t.uFlow.value = glow
+        t.uFar.value = this.length
+        t.uSize.value.set(tw, th, tLen)
+        slot.trail.position.set(x, base + th / 2, zNear - headLen + 0.1 - tLen / 2)
+        slot.trail.scale.set(tw, th, tLen)
+      }
+      const y = base + h / 2
 
       // Finger number (or note name) rides on the leading end.
       const label = n.finger ? String(n.finger) : this.labels ? midiToLetter(n.pitch) : ''
-      const show = label && active && state === 'pending' && ahead > -0.05 && len > 0.9
+      const show = label && active && state === 'pending' && ahead > -0.05 && len > 0.6
       slot.label.visible = !!show
       if (show) {
         const tex = this.text(label, 'note')
@@ -582,7 +771,7 @@ export class Highway3D implements HighwayRenderer {
         }
         const s = black ? 0.56 : 0.7
         slot.label.scale.set(s, s, 1)
-        slot.label.position.set(x, y + h / 2 + 0.2, zNear - 0.42)
+        slot.label.position.set(x, y + h / 2 + 0.2, zNear - Math.min(0.42, headLen / 2))
         slot.label.material.opacity = Math.min(1, (this.length * 0.9 + zNear) / (this.length * 0.25))
       }
 
@@ -598,7 +787,7 @@ export class Highway3D implements HighwayRenderer {
   private hideNotes(from: number): void {
     for (let i = from; i < this.notes.length; i++) {
       const s = this.notes[i]
-      s.mesh.visible = s.refl.visible = s.label.visible = false
+      s.mesh.visible = s.refl.visible = s.label.visible = s.trail.visible = false
     }
   }
 
@@ -612,16 +801,30 @@ export class Highway3D implements HighwayRenderer {
       uGlow: { value: 0 },
       uFar: { value: 60 },
       uReflect: { value: 0 },
+      uFlow: { value: 0 },
+      uTime: this.timeUniform,
     }
+    const trailUniforms: NoteUniforms = {
+      ...uniforms,
+      uSize: { value: new THREE.Vector3(1, 1, 1) },
+      uColor: { value: new THREE.Color() },
+      uRim: { value: new THREE.Color() },
+      uAlpha: { value: 1 },
+      uGlow: { value: 0 },
+      uFlow: { value: 0 },
+      uFar: { value: 60 },
+    }
+    const trail = new THREE.Mesh(this.noteGeo, noteMaterial(trailUniforms))
+    trail.renderOrder = 1
     const mesh = new THREE.Mesh(this.noteGeo, noteMaterial(uniforms))
     mesh.renderOrder = 2
     const refl = new THREE.Mesh(this.noteGeo, noteMaterial({ ...uniforms, uReflect: { value: 1 } }))
     refl.renderOrder = -1
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, toneMapped: false }))
     label.renderOrder = 3
-    this.noteGroup.add(mesh, label)
+    this.noteGroup.add(trail, mesh, label)
     this.reflGroup.add(refl)
-    const slot = { mesh, refl, uniforms, label }
+    const slot = { mesh, refl, uniforms, trail, trailUniforms, label }
     this.notes[i] = slot
     return slot
   }
@@ -702,6 +905,186 @@ export class Highway3D implements HighwayRenderer {
       i++
     }
     u.uLaneCount.value = i
+
+    // Lanes light up ahead of the notes coming down them, brighter as each gets close.
+    const approach = u.uApproach.value as THREE.Vector4[]
+    const approachColors = u.uApproachColors.value as THREE.Color[]
+    let a = 0
+    const notes = frame.chart?.notes ?? []
+    for (let j = 0; j < notes.length && a < MAX_APPROACH; j++) {
+      const n = notes[j]
+      const ahead = n.startBeat - frame.beat
+      if (ahead <= 0 || ahead >= APPROACH_BEATS) continue
+      if ((frame.noteState?.[j] ?? 'pending') !== 'pending' || !(frame.active?.[j] ?? true)) continue
+      const k = this.keys.get(n.pitch)
+      if (!k) continue
+      const near = Math.pow(1 - ahead / APPROACH_BEATS, 1.5)
+      approach[a].set(k.x, k.black ? 0.3 : 0.44, near, -ahead * this.beatLen)
+      approachColors[a].set(COLORS[n.hand])
+      a++
+    }
+    u.uApproachCount.value = a
+  }
+
+  // ---- chords, hand zones, streak and popups ---------------------------------
+
+  /** A glowing bracket across each chord still to come, with its name beside it. */
+  private updateBrackets(frame: Frame): void {
+    let used = 0
+    for (const g of this.chords) {
+      if (used >= MAX_BRACKETS) break
+      const ahead = g.startBeat - frame.beat
+      if (ahead > LOOKAHEAD * 0.95 || ahead < -0.04) continue
+      if (frame.active && !g.notes.some((i) => frame.active![i])) continue
+      if (frame.noteState && g.notes.every((i) => frame.noteState![i] !== 'pending')) continue
+      if (g.lo < this.lo || g.hi > this.hi) continue
+      const b = this.bracket(used++)
+      const edge = (p: number) => (isBlack(p) ? 0.32 : 0.44)
+      const x0 = this.keyX(g.lo) - edge(g.lo) - 0.1
+      const x1 = this.keyX(g.hi) + edge(g.hi) + 0.1
+      const z = -Math.max(0, ahead) * this.beatLen + 0.14
+      const fade = Math.max(0, Math.min(1, (this.length * 0.95 + z) / (this.length * 0.2)))
+      b.mat.color.set(COLORS[g.hand]).multiplyScalar(1.7)
+      b.mat.opacity = 0.9 * fade
+      b.bar.position.set((x0 + x1) / 2, 0.05, z)
+      b.bar.scale.set(x1 - x0, 0.06, 0.08)
+      b.left.position.set(x0, 0.24, z)
+      b.right.position.set(x1, 0.24, z)
+      b.group.visible = true
+      b.label.visible = !!g.name
+      if (g.name) {
+        const tex = this.text(g.name, 'chord', lighten(COLORS[g.hand], 0.35))
+        if (b.label.material.map !== tex) {
+          b.label.material.map = tex
+          b.label.material.needsUpdate = true
+        }
+        b.label.material.opacity = fade
+        b.label.position.set(x0 - 0.85, 0.5, z - 0.1)
+        b.label.scale.set(1.6, 0.8, 1)
+      }
+    }
+    for (let i = used; i < this.brackets.length; i++) this.brackets[i].group.visible = false
+  }
+
+  private bracket(i: number): Bracket {
+    if (this.brackets[i]) return this.brackets[i]
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+    const bar = new THREE.Mesh(this.bracketGeo, mat)
+    const left = new THREE.Mesh(this.bracketGeo, mat)
+    const right = new THREE.Mesh(this.bracketGeo, mat)
+    left.scale.set(0.07, 0.42, 0.07)
+    right.scale.set(0.07, 0.42, 0.07)
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false, depthTest: false, toneMapped: false }))
+    label.renderOrder = 9
+    const group = new THREE.Group()
+    group.renderOrder = 4
+    group.add(bar, left, right, label)
+    this.scene.add(group)
+    const b = { group, mat, bar, left, right, label }
+    this.brackets[i] = b
+    return b
+  }
+
+  /** A band of each hand's colour along the line, over the keys that hand will play next. */
+  private updateZones(frame: Frame, dt: number): void {
+    const zones = this.chart && frame.chart ? handZones(this.chart, frame.beat, ZONE_BEATS) : {}
+    const u = this.floor.material.uniforms
+    const fade = 1 - Math.exp(-dt * 4)
+    const glide = 1 - Math.exp(-dt * 5)
+    for (const [i, hand] of (['L', 'R'] as Hand[]).entries()) {
+      const z = this.zones[hand]
+      const r = zones[hand]
+      if (r && r.lo >= this.lo && r.hi <= this.hi) {
+        const x0 = this.keyX(r.lo) - (isBlack(r.lo) ? 0.3 : 0.5)
+        const x1 = this.keyX(r.hi) + (isBlack(r.hi) ? 0.3 : 0.5)
+        if (z.level < 0.02) {
+          z.lo = x0
+          z.hi = x1
+        } else {
+          z.lo += (x0 - z.lo) * glide
+          z.hi += (x1 - z.hi) * glide
+        }
+        z.level += (1 - z.level) * fade
+      } else {
+        z.level += (0 - z.level) * fade
+      }
+      z.strip.visible = z.level > 0.01
+      z.strip.position.set((z.lo + z.hi) / 2, 0.036, -0.32)
+      z.strip.scale.set(z.hi - z.lo, 0.6, 1)
+      z.strip.rotation.x = -Math.PI / 2
+      z.strip.material.uniforms.uLevel.value = z.level
+      ;(u.uZones.value as THREE.Vector4[])[i].set(z.lo, z.hi, z.level, 0)
+      ;(u.uZoneColors.value as THREE.Color[])[i].set(COLORS[hand])
+    }
+  }
+
+  /** The hit line burns hotter as the streak grows, and flares at milestones. */
+  private updateStreak(frame: Frame, dt: number): void {
+    const streak = frame.streak ?? 0
+    const milestone = streakMilestone(this.lastStreak, streak)
+    this.lastStreak = streak
+    if (milestone) {
+      this.surge = 1
+      this.popup(null, `${milestone} in a row!`, 'gold')
+      for (let i = 0; i < 70; i++) {
+        const x = this.viewCx + (Math.random() - 0.5) * this.viewW
+        this.burstAt(x, 0.08, -0.1, Math.random() < 0.5 ? TONE_COLORS.gold : '#ffffff', 1, 0.2)
+      }
+    }
+    this.heat += (Math.min(1, streak / 40) - this.heat) * (1 - Math.exp(-dt * 3))
+    this.surge = Math.max(0, this.surge - dt * 1.3)
+    const line = (this.hitLine.material as THREE.MeshBasicMaterial).color
+    line.copy(HIT_COOL).lerp(HIT_HOT, this.heat * 0.75).multiplyScalar(1 + this.heat * 0.45 + this.surge * 1.6)
+    const hu = this.hitHalo.material.uniforms
+    hu.uColor.value.copy(HALO_COOL).lerp(HALO_HOT, this.heat * 0.8)
+    hu.uStrength.value = 0.35 * (1 + this.heat * 1.1 + this.surge * 2.5)
+  }
+
+  /** A word that pops up from a key and floats away (or from the middle of the line, with no key). */
+  private popup(pitch: number | null, text: string, tone: Tone | 'gold'): void {
+    const k = pitch === null ? null : this.keys.get(pitch)
+    if (pitch !== null && !k) return
+    const p =
+      this.popups.find((x) => x.alive && pitch !== null && x.pitch === pitch) ??
+      this.popups.find((x) => !x.alive) ??
+      this.popups.reduce((a, b) => (a.age > b.age ? a : b))
+    const big = pitch === null
+    p.alive = true
+    p.age = 0
+    p.pitch = pitch ?? -1
+    p.life = big ? 1.7 : POPUP_LIFE
+    p.size = big ? 2.1 : 1
+    p.rise = big ? 0.9 : 1.3
+    const tex = this.text(text, 'pop', TONE_COLORS[tone])
+    if (p.sprite.material.map !== tex) {
+      p.sprite.material.map = tex
+      p.sprite.material.needsUpdate = true
+    }
+    p.sprite.userData.x = k ? k.x : this.viewCx
+    p.sprite.userData.y = big ? 2.4 : k?.black ? 1.25 : 1.0
+    p.sprite.userData.z = big ? -3 : -0.5
+    p.sprite.visible = true
+  }
+
+  private updatePopups(dt: number): void {
+    for (const p of this.popups) {
+      if (!p.alive) continue
+      p.age += dt
+      const t = p.age / p.life
+      if (t >= 1) {
+        p.alive = false
+        p.sprite.visible = false
+        continue
+      }
+      const rise = 1 - Math.pow(1 - t, 3)
+      // Pop in slightly oversized, settle, then fade as it drifts up.
+      const pop = t < 0.1 ? 0.55 + 0.7 * (t / 0.1) : 1.25 - 0.25 * Math.min(1, (t - 0.1) / 0.12)
+      const s = p.size * pop
+      const { x, y, z } = p.sprite.userData as { x: number; y: number; z: number }
+      p.sprite.position.set(x, y + rise * p.rise, z)
+      p.sprite.scale.set(1.9 * s, 0.95 * s, 1)
+      p.sprite.material.opacity = t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4
+    }
   }
 
   // ---- sparks, rings and dust ------------------------------------------------
@@ -763,15 +1146,17 @@ export class Highway3D implements HighwayRenderer {
   private burst(pitch: number, color: string, count: number): void {
     const k = this.keys.get(pitch)
     if (!k) return
-    const width = k.black ? 0.5 : 0.74
-    const y = k.black ? BLACK_RISE : 0.05
+    this.burstAt(k.x, k.black ? BLACK_RISE : 0.05, -0.08, color, count, (k.black ? 0.5 : 0.74) * 1.2)
+  }
+
+  private burstAt(x: number, y: number, z: number, color: string, count: number, spread: number): void {
     for (let i = 0; i < count; i++) {
       const s = this.sparks[this.sparkCursor]
       this.sparkCursor = (this.sparkCursor + 1) % MAX_SPARKS
       s.alive = true
       s.age = 0
       s.life = SPARK_LIFE * (0.55 + Math.random() * 0.6)
-      s.pos.set(k.x + (Math.random() - 0.5) * width * 1.2, y + Math.random() * 0.1, -0.08 - Math.random() * 0.15)
+      s.pos.set(x + (Math.random() - 0.5) * spread, y + Math.random() * 0.1, z - Math.random() * 0.15)
       s.vel.set((Math.random() - 0.5) * 2.2, 1.6 + Math.random() * 3.4, -(0.4 + Math.random() * 2.4))
       s.color.set(Math.random() < 0.25 ? lighten(color, 0.6) : color)
       s.size = 0.06 + Math.random() * 0.1
@@ -841,7 +1226,15 @@ export class Highway3D implements HighwayRenderer {
 // ---- materials -----------------------------------------------------------------
 
 const labelPlane = new THREE.PlaneGeometry(1, 1)
+const tmpV = new THREE.Vector3()
+const tmpV2 = new THREE.Vector2()
+const raycaster = new THREE.Raycaster()
+const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const WHITE = new THREE.Color(1, 1, 1)
+const HIT_COOL = new THREE.Color(1.5, 1.6, 2.1)
+const HIT_HOT = new THREE.Color(2.4, 1.95, 1.15)
+const HALO_COOL = new THREE.Color(0.5, 0.58, 1.0)
+const HALO_HOT = new THREE.Color(1.0, 0.72, 0.32)
 
 /** A soft round glow for flares. */
 function radialTexture(): THREE.CanvasTexture {
@@ -875,6 +1268,12 @@ function floorMaterial(): THREE.ShaderMaterial {
       uLaneCount: { value: 0 },
       uLanes: { value: Array.from({ length: MAX_GLOWS }, () => new THREE.Vector4()) },
       uLaneColors: { value: Array.from({ length: MAX_GLOWS }, () => new THREE.Color()) },
+      uApproachCount: { value: 0 },
+      uApproach: { value: Array.from({ length: MAX_APPROACH }, () => new THREE.Vector4()) },
+      uApproachColors: { value: Array.from({ length: MAX_APPROACH }, () => new THREE.Color()) },
+      uZones: { value: [new THREE.Vector4(), new THREE.Vector4()] },
+      uZoneColors: { value: [new THREE.Color(), new THREE.Color()] },
+      uView: { value: new THREE.Vector2(0, 30) },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
@@ -888,6 +1287,12 @@ function floorMaterial(): THREE.ShaderMaterial {
       uniform int uLaneCount;
       uniform vec4 uLanes[${MAX_GLOWS}];
       uniform vec3 uLaneColors[${MAX_GLOWS}];
+      uniform int uApproachCount;
+      uniform vec4 uApproach[${MAX_APPROACH}];
+      uniform vec3 uApproachColors[${MAX_APPROACH}];
+      uniform vec4 uZones[2];
+      uniform vec3 uZoneColors[2];
+      uniform vec2 uView;
       varying vec3 vWorld;
 
       // Antialiased line; once thinner than a pixel it dims instead of breaking into dashes.
@@ -932,9 +1337,31 @@ function floorMaterial(): THREE.ShaderMaterial {
           col += uLaneColors[i] * L.z * (across * along * 0.22 + core * 0.6);
         }
 
+        // Lanes lit ahead of an incoming note: a soft fill between bright rails, from the line up to the note.
+        for (int i = 0; i < ${MAX_APPROACH}; i++) {
+          if (i >= uApproachCount) break;
+          vec4 A = uApproach[i];
+          float dx = abs(vWorld.x - A.x);
+          float inside = 1.0 - smoothstep(A.y - 0.08, A.y + 0.02, dx);
+          float along = smoothstep(A.w - 0.3, A.w + 0.2, vWorld.z) * step(vWorld.z, 0.05);
+          float rail = lineAA(dx - A.y, 0.022);
+          // Brightest right behind the note, so the light seems to lead it in.
+          float lead = 0.5 + 0.5 * exp((A.w - vWorld.z) * 0.6);
+          col += uApproachColors[i] * A.z * along * (inside * 0.13 * lead + rail * 0.85);
+        }
+
+        // Where each hand will be playing: a soft wash of its colour just behind the line.
+        for (int i = 0; i < 2; i++) {
+          vec4 Z = uZones[i];
+          if (Z.z < 0.01) continue;
+          float across = smoothstep(Z.x - 0.4, Z.x + 0.3, vWorld.x) * (1.0 - smoothstep(Z.y - 0.3, Z.y + 0.4, vWorld.x));
+          float back = exp(vWorld.z / max(1.0, uLength * 0.05));
+          col += uZoneColors[i] * Z.z * across * back * 0.32;
+        }
+
         // Sideways vignette so the eye stays on the keys in play.
-        float edge = abs(vWorld.x - cameraPosition.x) / max(1.0, uLength * 0.5);
-        col *= 1.0 - smoothstep(0.35, 1.2, edge) * 0.5;
+        float edge = abs(vWorld.x - uView.x) / max(1.0, uView.y * 0.5);
+        col *= 1.0 - smoothstep(0.7, 1.5, edge) * 0.55;
         gl_FragColor = vec4(col, 1.0);
       }`,
     depthWrite: false,
@@ -944,14 +1371,40 @@ function floorMaterial(): THREE.ShaderMaterial {
 /** A soft band of light lying on the highway just behind the hit line. */
 function haloMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(0.5, 0.58, 1.0) }, uStrength: { value: 0.35 } },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uStrength;
       varying vec2 vUv;
       void main() {
         float a = pow(1.0 - vUv.y, 4.0) * (1.0 - pow(abs(vUv.x - 0.5) * 2.0, 4.0));
-        gl_FragColor = vec4(vec3(0.5, 0.58, 1.0) * 0.35, a);
+        gl_FragColor = vec4(uColor * uStrength, a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+}
+
+/** A hand zone's band along the line: brightest at the line, soft at both ends. */
+function stripMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color() }, uLevel: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uLevel;
+      varying vec2 vUv;
+      void main() {
+        float ends = smoothstep(0.0, 0.06, vUv.x) * smoothstep(1.0, 0.94, vUv.x);
+        // The plane lies flat; uv.y = 0 is at the line, 1 further up the highway.
+        float a = ends * (exp(-vUv.y * 9.0) * 0.9 + 0.1 * (1.0 - vUv.y));
+        gl_FragColor = vec4(uColor * 2.6, a * uLevel);
       }`,
     transparent: true,
     depthWrite: false,
@@ -1003,6 +1456,8 @@ function noteMaterial(uniforms: NoteUniforms): THREE.ShaderMaterial {
       uniform float uGlow;
       uniform float uFar;
       uniform float uReflect;
+      uniform float uFlow;
+      uniform float uTime;
       varying vec3 vLocal;
       varying vec3 vNormal;
       varying vec3 vView;
@@ -1025,6 +1480,8 @@ function noteMaterial(uniforms: NoteUniforms): THREE.ShaderMaterial {
         col = mix(col, (uRim * 1.4 + uColor) * (1.3 + 0.9 * t), uGlow * 0.85);
         col *= 1.0 + uGlow * 1.2;
         col *= 1.25;
+        // A held trail: bands of light run down it into the line.
+        col += uRim * uFlow * pow(fract(vWorld.z * 0.35 - uTime * 2.2), 6.0) * 1.4;
 
         float alpha = mix(0.72, 0.95, t) + rim * 0.2 + fres * 0.2;
         // Fade in from the far end of the highway.

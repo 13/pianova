@@ -29,6 +29,15 @@ export interface Frame {
   highlight?: Map<number, Hand | 'hint'>
   /** For held keys: which hand's colour to light them in. Others glow neutral. */
   keyHands?: Map<number, Hand>
+  /** Notes hit in a row; the hit line burns brighter as it grows. */
+  streak?: number
+}
+
+/** How a judged note was timed, for the word that floats up from its key. */
+export interface FlashTiming {
+  offsetMs: number
+  /** False when the music waits for the player, so timing is not judged. */
+  timed: boolean
 }
 
 export interface HighwayOptions {
@@ -42,7 +51,7 @@ export interface HighwayRenderer {
   setRange(chart: Chart | null): void
   setOptions(opts: HighwayOptions): void
   setHeld(held: Set<number>): void
-  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand): void
+  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand, timing?: FlashTiming): void
   draw(frame: Frame): void
   destroy(): void
 }

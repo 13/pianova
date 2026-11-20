@@ -1,6 +1,6 @@
 import type { Chart, Hand } from '../core/types'
 import type { Grade } from '../judge/judge'
-import type { Frame, HighwayOptions, HighwayRenderer } from './common'
+import type { FlashTiming, Frame, HighwayOptions, HighwayRenderer } from './common'
 import { Highway2D } from './highway2d'
 import { Highway3D } from './highway3d'
 
@@ -38,8 +38,8 @@ export class Highway implements HighwayRenderer {
   setHeld(held: Set<number>): void {
     this.impl.setHeld(held)
   }
-  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand): void {
-    this.impl.flash(pitch, kind, hand)
+  flash(pitch: number, kind: Grade | 'wrong', hand?: Hand, timing?: FlashTiming): void {
+    this.impl.flash(pitch, kind, hand, timing)
   }
   draw(frame: Frame): void {
     this.impl.draw(frame)
