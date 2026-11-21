@@ -35,6 +35,9 @@ export interface Frame {
   sections?: { name: string; startBeat: number }[]
 }
 
+/** The colour chord names are written in. */
+export const CHORD_COLOR = '#ffd76a'
+
 /** How a judged note was timed, for the word that floats up from its key. */
 export interface FlashTiming {
   offsetMs: number

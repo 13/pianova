@@ -3,7 +3,7 @@ import { noteIndex, noteSpan } from '../chart/window'
 import type { Chart, Hand } from '../core/types'
 import { noteLetter } from '../i18n'
 import type { Grade } from '../judge/judge'
-import { COLORS, FONT } from './common'
+import { CHORD_COLOR, COLORS, FONT } from './common'
 
 /** Position of each pitch class on the staff, counted in white keys from C. */
 const STEP = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]
@@ -18,6 +18,8 @@ export interface SheetFrame {
   noteState?: ('pending' | Grade)[]
   active?: boolean[]
   sections?: { name: string; startBeat: number }[]
+  /** Chord symbols over the treble staff, as on a lead sheet. */
+  chords?: { name: string; startBeat: number }[]
   /** Note names under the heads. */
   labels?: boolean
 }
@@ -97,6 +99,17 @@ export class SheetView {
     for (const s of f.sections ?? []) {
       if (s.startBeat < from || s.startBeat > to) continue
       g.fillText(s.name, xOf(s.startBeat) + 3, top - sp * 1.6)
+    }
+    if (f.chords?.length) {
+      // On the part names' row (all there is room for above the staff), after a name there.
+      const named = new Map<number, number>()
+      for (const s of f.sections ?? []) named.set(Math.round(s.startBeat * 1e4), g.measureText(s.name).width + sp * 0.6)
+      g.font = `800 ${Math.round(sp * 1.1)}px ${FONT}`
+      g.fillStyle = CHORD_COLOR
+      for (const c of f.chords) {
+        if (c.startBeat < from || c.startBeat > to) continue
+        g.fillText(c.name, xOf(c.startBeat) + 3 + (named.get(Math.round(c.startBeat * 1e4)) ?? 0), top - sp * 1.6)
+      }
     }
 
     // Notes, a chord at a time so it shares one stem.

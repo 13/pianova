@@ -1,5 +1,6 @@
 import { noteIndex, noteSpan } from './window'
-import type { Chart } from '../core/types'
+import type { Chart, Hand } from '../core/types'
+import { noteLetter } from '../i18n'
 
 /** A chord the music implies over a stretch of beats. */
 export interface ChordSpan {
@@ -79,4 +80,35 @@ const LETTERS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'
 /** 'C', 'Am', 'F#'… */
 export function chordLabel(c: { root: number; minor: boolean }): string {
   return LETTERS[c.root] + (c.minor ? 'm' : '')
+}
+
+/**
+ * The chords of the whole song: worked out from your notes and from everything that plays
+ * along (the notes a level leaves out, an imported file's other instruments), so a
+ * simplified part still shows, and the band still plays, the song's real harmony.
+ * Drums are left out; a bass line counts as the left hand, where it weighs most.
+ */
+export function songHarmony(chart: Chart): ChordSpan[] {
+  const extra = (chart.backing ?? [])
+    .filter((n) => n.voice !== 'drums')
+    .map((n) => ({ pitch: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats, hand: (n.voice === 'bass' || n.pitch < 60 ? 'L' : 'R') as Hand }))
+  if (!extra.length) return harmonize(chart)
+  return harmonize({ ...chart, notes: [...chart.notes, ...extra].sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch) })
+}
+
+/** Where each chord of the song starts and its name in the current language ('B' / 'H'). */
+export function chordMarks(chart: Chart): { name: string; startBeat: number }[] {
+  return songHarmony(chart).map((s) => ({ name: noteLetter(s.root) + (s.minor ? 'm' : ''), startBeat: s.startBeat }))
+}
+
+/** Index of the chord sounding at `beat` (the last to start by then), or -1 before the first. */
+export function chordAt(chords: { startBeat: number }[], beat: number): number {
+  let lo = 0
+  let hi = chords.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (chords[mid].startBeat <= beat + 1e-6) lo = mid + 1
+    else hi = mid
+  }
+  return lo - 1
 }

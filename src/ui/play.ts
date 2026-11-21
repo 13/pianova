@@ -1,3 +1,4 @@
+import { chordAt, chordMarks } from '../chart/harmony'
 import { placeNotes, sectionAt, songSections, type Section } from '../chart/sections'
 import { noteIndex, noteSpan } from '../chart/window'
 import type { Chart, Hand } from '../core/types'
@@ -76,6 +77,8 @@ const TEMPOS = [50, 60, 70, 75, 80, 90, 100]
 /** Auto-played notes: demos at a normal touch, the other hand quieter so yours stands out. */
 const DEMO_VELOCITY = 0.6
 const ACCOMPANY_VELOCITY = 0.4
+/** How far apart chords sit on the chord strip. */
+const CHORD_PX_PER_BEAT = 30
 
 /** The play screen: title and progress, highway, practice panel, transport bar. */
 export class PlayView implements View {
@@ -148,6 +151,13 @@ export class PlayView implements View {
   /** Seconds of playing not yet added to today's practice time. */
   private practiced = 0
   private bandEvents: BandEvent[] = []
+  /** The song's chords, named; only for songs (where the band plays). */
+  private chords: { name: string; startBeat: number }[] | undefined
+  /** A line of the song's chords sliding past a "now" mark, like a lead sheet scrolling by. */
+  private chordTrack = h('div', { class: 'chord-track' })
+  private chordCur = h('strong', { class: 'chord-cur' })
+  private chordStrip = h('div', { class: 'chord-strip', hidden: true, 'aria-hidden': 'true' }, this.chordCur, this.chordTrack, h('i', { class: 'chord-now' }))
+  private chordShown = -2
   private lastTick = 0
   private stageEl!: HTMLElement
   private sheetCanvas = h('canvas', { class: 'sheet-canvas' })
@@ -164,6 +174,8 @@ export class PlayView implements View {
     const { chart } = cfg
     this.sections = cfg.sections ? placeNotes(cfg.sections, chart) : songSections(chart)
     this.bandEvents = bandFor(chart, !!cfg.band)
+    if (cfg.band) this.chords = chordMarks(chart)
+    this.buildChordStrip()
     this.chartHands = (['L', 'R'] as Hand[]).filter((hand) => chart.notes.some((n) => n.hand === hand))
     this.bars = Math.max(1, Math.ceil(chart.lengthBeats / chart.beatsPerBar))
     this.mode = cfg.practice?.mode ?? cfg.mode
@@ -216,6 +228,7 @@ export class PlayView implements View {
             h('div', { class: 'panel-row' }, icon('target'), h('span', null, t('Accuracy', 'Genauigkeit')), this.accuracyEl),
             h('div', { class: 'panel-row' }, icon('flame'), h('span', null, t('Streak', 'Serie')), this.streakEl),
           ),
+        this.chordStrip,
         this.feedbackEl,
         this.handGuide.el,
         this.bannerEl,
@@ -549,9 +562,19 @@ export class PlayView implements View {
       this.highway.setRange(this.cfg.chart)
       this.bare = { ...this.cfg.chart, notes: [] }
       this.bandEvents = bandFor(this.cfg.chart, !!this.cfg.band)
+      if (this.cfg.band) this.chords = chordMarks(this.cfg.chart)
+      this.buildChordStrip()
     }
     if (patch.tempo !== undefined) this.tempo = patch.tempo
     this.restart()
+  }
+
+  /** One label per chord, placed by beat; the frame loop slides the whole line along. */
+  private buildChordStrip(): void {
+    this.chordShown = -2
+    this.chordTrack.replaceChildren(
+      ...(this.chords ?? []).map((c) => h('span', { class: 'chord-name', style: `left: ${c.startBeat * CHORD_PX_PER_BEAT}px` }, c.name)),
+    )
   }
 
   /** A line under the title, e.g. "Part B · Level 3 of 5 · 80% speed". */
@@ -753,6 +776,22 @@ export class PlayView implements View {
     if (this.hudDirty) this.streak = session.summary().streak
     const view = this.app.progress.settings.view
     const sheetOnly = view === 'sheet'
+    const chords = this.app.progress.settings.chordNames ? this.chords : undefined
+    this.chordStrip.hidden = !chords?.length
+    if (chords?.length) {
+      this.chordTrack.style.transform = `translateX(${(-Math.max(-4, session.beat) * CHORD_PX_PER_BEAT).toFixed(1)}px)`
+      const cur = chordAt(chords, session.beat)
+      if (cur !== this.chordShown) {
+        // The sounding chord stands by the "now" mark; those still to come slide towards it.
+        const items = this.chordTrack.children
+        for (let i = 0; i < items.length; i++) {
+          items[i].classList.toggle('past', i <= cur)
+          items[i].classList.toggle('next', i === cur + 1)
+        }
+        this.chordCur.textContent = chords[cur]?.name ?? ''
+        this.chordShown = cur
+      }
+    }
     if (view !== 'highway')
       this.sheet?.draw({
         beat: session.beat,
@@ -760,6 +799,7 @@ export class PlayView implements View {
         noteState: session.noteState,
         active,
         sections: this.sections.length > 1 ? this.sections : undefined,
+        chords,
         labels: this.app.progress.settings.labels,
       })
     this.highway.draw({
@@ -944,9 +984,26 @@ export class PlayView implements View {
         ] as const
       ).map(([value, label]) => h('option', { value, selected: this.app.progress.settings.view === value }, label)),
     )
+    const chordToggle =
+      !!this.chords?.length &&
+      h(
+        'button',
+        {
+          class: 'chip toggle',
+          'aria-pressed': String(this.app.progress.settings.chordNames),
+          title: t("Show the song's chords", 'Die Akkorde des Liedes zeigen'),
+          onclick: () => {
+            const on = !this.app.progress.settings.chordNames
+            this.app.progress.setSettings({ chordNames: on })
+            chordToggle && chordToggle.setAttribute('aria-pressed', String(on))
+          },
+        },
+        t('Chords', 'Akkorde'),
+      )
     controls.push(
       h('span', { class: 'spacer' }),
       this.mixer(),
+      chordToggle,
       view,
       cfg.onSkip && h('button', { class: 'chip', onclick: cfg.onSkip }, t('Skip', 'Überspringen')),
       h('span', { class: 'divider' }),

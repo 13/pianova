@@ -1,5 +1,5 @@
-import { harmonize } from '../chart/harmony'
-import type { BackingNote, Chart, Hand } from '../core/types'
+import { songHarmony } from '../chart/harmony'
+import type { BackingNote, Chart } from '../core/types'
 
 export type DrumSound = 'kick' | 'snare' | 'hat' | 'tom' | 'crash'
 export type PitchedSound = 'bass' | 'pad' | 'keys' | 'strings' | 'organ' | 'guitar' | 'brass' | 'lead'
@@ -96,10 +96,7 @@ export function bandFor(chart: Chart, generated = true): BandEvent[] {
       events.push({ beat, sound, pitches: [], durationBeats: 0.25, velocity: last && sound === 'kick' ? 1 : velocity })
     }
   }
-  // The chords come from all of the song's piano notes, the ones left out at a level too.
-  const keys = backing.filter((n) => n.voice === 'keys').map((n) => ({ pitch: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats, hand: (n.pitch < 60 ? 'L' : 'R') as Hand }))
-  const whole = keys.length ? { ...chart, notes: [...chart.notes, ...keys].sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch) } : chart
-  for (const span of pad || bass ? harmonize(whole) : []) {
+  for (const span of pad || bass ? songHarmony(chart) : []) {
     let root = 36 + span.root
     if (root > 43) root -= 12
     const third = span.root + (span.minor ? 3 : 4)
