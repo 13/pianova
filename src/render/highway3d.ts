@@ -857,6 +857,35 @@ export class Highway3D implements HighwayRenderer {
     this.adaptDpr(frameMs, now)
   }
 
+  /**
+   * Where a fingertip resting on `pitch` would sit on screen, in CSS pixels from the
+   * canvas's top-left corner: on the key's top surface (as pressed now), centred across
+   * it, 60% of the way to the front of a white key or 45% along a black one. `w` is the
+   * on-screen width of one white key there. Null outside the keyboard or before layout.
+   * Uses the camera of the last frame drawn.
+   */
+  keyAnchor(pitch: number): { x: number; y: number; w: number } | null {
+    const k = this.keys.get(pitch)
+    const cw = this.canvas.clientWidth
+    const ch = this.canvas.clientHeight
+    if (!k || this.w === 0 || cw === 0 || ch === 0) return null
+    // A point on the key top, in its pivot's frame, tipped by the key's press.
+    const y0 = k.black ? BLACK_RISE : 0
+    const z0 = k.black ? BLACK_LEN * 0.45 : KEY_LEN * 0.6
+    const r = k.pivot.rotation.x
+    const c = Math.cos(r)
+    const sn = Math.sin(r)
+    const py = k.pivot.position.y + y0 * c - z0 * sn
+    const pz = k.pivot.position.z + y0 * sn + z0 * c
+    const cam = this.camera
+    const p = anchorV.set(k.x - 0.5, py, pz).project(cam)
+    const left = ((p.x + 1) / 2) * cw
+    p.set(k.x + 0.5, py, pz).project(cam)
+    const right = ((p.x + 1) / 2) * cw
+    p.set(k.x, py, pz).project(cam)
+    return { x: ((p.x + 1) / 2) * cw, y: ((1 - p.y) / 2) * ch, w: Math.abs(right - left) }
+  }
+
   private updateNotes(frame: Frame, chart: Chart, now: number, sounding: Map<number, THREE.Color>): void {
     const spawnSustain = now - this.lastSustainSpark > 45
     const heads = this.heads
@@ -1473,6 +1502,7 @@ const HIT_COOL = new THREE.Color(1.5, 1.6, 2.1)
 const HIT_HOT = new THREE.Color(2.4, 1.95, 1.15)
 const HALO_COOL = new THREE.Color(0.5, 0.58, 1.0)
 const HALO_HOT = new THREE.Color(1.0, 0.72, 0.32)
+const anchorV = new THREE.Vector3()
 const HANDS: Hand[] = ['L', 'R']
 const NO_SECTIONS: NonNullable<Frame['sections']> = []
 const FINGERS = ['0', '1', '2', '3', '4', '5']

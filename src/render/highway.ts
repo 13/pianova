@@ -1,6 +1,6 @@
 import type { Chart, Hand } from '../core/types'
 import type { Grade } from '../judge/judge'
-import type { FlashTiming, Frame, HighwayOptions, HighwayRenderer } from './common'
+import type { FlashTiming, Frame, HighwayOptions, HighwayRenderer, KeyAnchor } from './common'
 import { Highway2D } from './highway2d'
 
 export { COLORS, type Frame } from './common'
@@ -96,6 +96,9 @@ export class Highway implements HighwayRenderer {
   }
   draw(frame: Frame): void {
     this.impl?.draw(frame)
+  }
+  keyAnchor(pitch: number): KeyAnchor | null {
+    return this.impl?.keyAnchor?.(pitch) ?? null
   }
   destroy(): void {
     this.destroyed = true

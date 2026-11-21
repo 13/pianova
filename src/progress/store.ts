@@ -22,6 +22,8 @@ export interface Settings {
   mix: { accomp: number; band: number; click: number }
   /** The player's keyboard as measured by pressing its lowest and highest key. */
   measuredKeys: KeyRange | null
+  /** Draw see-through hands over the keys, showing which finger plays next. */
+  handOverlay: boolean
 }
 
 /** Where you are with one song: a level and a best share of notes played right, per part. */
@@ -62,7 +64,7 @@ export const BACKUP_KEY = 'pianova.backup'
  */
 const VERSION = 2
 const MAX_STATS = 5000
-const DEFAULT_SETTINGS: Settings = { latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null }
+const DEFAULT_SETTINGS: Settings = { latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null, handOverlay: true }
 
 interface Blob {
   version: number
@@ -127,6 +129,7 @@ function readSettings(v: unknown): Settings {
     dailyGoalMin: Math.round(num(v.dailyGoalMin, 1, 600, d.dailyGoalMin)),
     mix: { accomp: num(mix.accomp, 0, 1, d.mix.accomp), band: num(mix.band, 0, 1, d.mix.band), click: num(mix.click, 0, 1, d.mix.click) },
     measuredKeys: validRange(v.measuredKeys) ? { lo: v.measuredKeys.lo, hi: v.measuredKeys.hi } : null,
+    handOverlay: typeof v.handOverlay === 'boolean' ? v.handOverlay : d.handOverlay,
   }
 }
 

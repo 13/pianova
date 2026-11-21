@@ -10,6 +10,7 @@ import { Session, type Mode } from '../session/session'
 import type { App } from './app'
 import { h, icon, percent, type View } from './dom'
 import { HandGuide } from './handGuide'
+import { HandOverlay } from './handOverlay'
 import { t } from '../i18n'
 
 /** What the practice tools are set to; carried from one run to the next. */
@@ -119,6 +120,10 @@ export class PlayView implements View {
   private allHands = new Map<number, Hand>()
   private currentSection = -1
   private handGuide: HandGuide
+  private handOverlay = new HandOverlay()
+  /** The player's keys, for placing the hands. */
+  private keyRange: { lo: number; hi: number }
+  private anchor = (pitch: number) => this.highway.keyAnchor(pitch)
   /** Shows a loop set from the section timeline on the transport bar's loop controls. */
   private showLoop: (() => void) | null = null
   private trackLoop = h('div', { class: 'tl-loop', hidden: true }, h('span', { class: 'loop-end a' }, 'A'), h('span', { class: 'loop-end b' }, 'B'))
@@ -162,6 +167,8 @@ export class PlayView implements View {
     this.loop = cfg.practice?.loop ?? null
     this.hadDevice = app.input.status.inputs.length > 0
     this.handGuide = new HandGuide(this.chartHands)
+    const { lo, hi } = app.keyboard
+    this.keyRange = { lo, hi }
 
     const canvas = h('canvas', { class: 'stage-canvas' })
     this.overlay.append(
@@ -194,6 +201,7 @@ export class PlayView implements View {
         'div',
         { class: 'stage' },
         canvas,
+        this.handOverlay.el,
         h('div', { class: 'sheet' }, this.sheetCanvas),
         cfg.scored &&
           h(
@@ -761,6 +769,15 @@ export class PlayView implements View {
       sections: this.sections.length > 1 ? this.sections : undefined,
     })
     this.handGuide.update(chart, session.beat, session.noteState, active)
+    this.handOverlay.update({
+      chart,
+      beat: session.beat,
+      noteState: session.noteState,
+      active,
+      keys: this.keyRange,
+      anchor: this.anchor,
+      visible: this.app.progress.settings.handOverlay && !sheetOnly,
+    })
 
     const resumeCount = session.resumeCount(now)
     const counting = (session.beat < 0 && session.state === 'running' && session.mode === 'timed') || resumeCount > 0

@@ -50,8 +50,18 @@ export interface HighwayOptions {
   keys?: { lo: number; hi: number }
 }
 
+/** Where a fingertip resting on a key sits on screen, in CSS px from the canvas's top left. */
+export interface KeyAnchor {
+  x: number
+  y: number
+  /** On-screen width of a white key there. */
+  w: number
+}
+
 /** What both renderers (WebGL and the 2D fallback) offer the screens. */
 export interface HighwayRenderer {
+  /** Where to draw a finger on a key (as of the last draw), or null if it is not shown. */
+  keyAnchor?(pitch: number): KeyAnchor | null
   setRange(chart: Chart | null): void
   setOptions(opts: HighwayOptions): void
   setHeld(held: Set<number>): void

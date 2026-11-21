@@ -1,7 +1,7 @@
 import { noteIndex, noteSpan } from '../chart/window'
 import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
-import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, rgba, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
+import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, rgba, type Frame, type HighwayOptions, type HighwayRenderer, type KeyAnchor } from './common'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
 import { noteLetter } from '../i18n'
@@ -144,6 +144,15 @@ export class Highway2D implements HighwayRenderer {
     const { hitY, horizon } = this.layout
     const scale = FAR_SCALE + (1 - FAR_SCALE) * p
     return { x: this.w / 2 + (x - this.w / 2) * scale, y: horizon + (hitY - horizon) * p, scale }
+  }
+
+  keyAnchor(pitch: number): KeyAnchor | null {
+    if (this.w === 0 || pitch < this.lo || pitch > this.hi) return null
+    const k = this.key(pitch)
+    // Fingertips rest past the black keys on a white key, and halfway along a black one.
+    const f = isBlack(pitch) ? BLACK_LENGTH * 0.5 : BLACK_LENGTH + (1 - BLACK_LENGTH) * 0.15
+    const { x, y } = this.onKeys(k.x, f)
+    return { x, y, w: this.layout.whiteW * (1 + (KEY_SPREAD - 1) * f) }
   }
 
   /** A point on the keyboard: x as at the hit line, f from 0 (back) to 1 (front edge). */

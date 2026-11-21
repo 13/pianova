@@ -114,6 +114,7 @@ export function settingsView(app: App): View {
     },
   })
   const labels = h('input', { type: 'checkbox', checked: settings.labels, onchange: () => progress.setSettings({ labels: labels.checked }) })
+  const hands = h('input', { type: 'checkbox', checked: settings.handOverlay, onchange: () => progress.setSettings({ handOverlay: hands.checked }) })
 
   // ---- your instrument ----
   const keyboardNote = h('p', { class: 'muted' })
@@ -222,7 +223,11 @@ export function settingsView(app: App): View {
       ),
       row(t('Timing offset', 'Timing-Ausgleich'), h('div', { class: 'row' }, latency, latencyValue, calibrate), calibrateNote),
       row(t('Volume', 'Lautstärke'), volume),
-      row(t('Display', 'Anzeige'), h('label', { class: 'check' }, labels, t('Show note names on the keys and notes', 'Notennamen auf Tasten und Noten zeigen'))),
+      row(
+        t('Display', 'Anzeige'),
+        h('label', { class: 'check' }, labels, t('Show note names on the keys and notes', 'Notennamen auf Tasten und Noten zeigen')),
+        h('label', { class: 'check' }, hands, t('Show hands over the keys, with the finger to play next', 'Hände über den Tasten zeigen, mit dem Finger, der als Nächstes spielt')),
+      ),
       row(
         t('Computer keys', 'Computertasten'),
         h(

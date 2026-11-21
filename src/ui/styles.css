@@ -422,3 +422,14 @@ span.chip.on { color: #eafff2; border-color: rgba(74, 222, 128, 0.7); background
 .measure-strip .mk.black.in::after { background: #22263f; }
 .measure-strip .mk.white.end { background: var(--gold); }
 .measure-strip .mk.black.end::after { background: var(--gold); }
+
+/* ---- see-through hands over the keys ---- */
+.hand-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; overflow: hidden; }
+.oh-palm { fill: color-mix(in srgb, var(--hand) 16%, transparent); stroke: color-mix(in srgb, var(--hand) 22%, transparent); stroke-linejoin: round; }
+.oh-finger { stroke: var(--hand); stroke-linecap: round; transition: opacity 0.15s; }
+.oh-tip { fill: rgba(10, 12, 30, 0.55); stroke: var(--hand); stroke-width: 2; stroke-opacity: 0.6; }
+.oh-tip.next { fill: color-mix(in srgb, var(--hand) 45%, rgba(10, 12, 30, 0.6)); stroke-opacity: 1; }
+.oh-tip.now, .oh-tip.hold { fill: var(--hand); stroke: #fff; stroke-opacity: 0.9; filter: drop-shadow(0 0 6px var(--hand)); }
+.oh-num { fill: rgba(255, 255, 255, 0.75); font-weight: 700; text-anchor: middle; font-family: ui-sans-serif, system-ui, sans-serif; }
+.oh-num.next { fill: #fff; }
+.oh-num.now, .oh-num.hold { fill: #0b0d1f; }
