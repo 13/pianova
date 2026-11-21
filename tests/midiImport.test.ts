@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { chartFromMidiJson, describeTracks, MAX_NOTE_BEATS, MAX_NOTES, readMidiFile, type MidiJson } from '../src/chart/midiImport'
 
-const note = (midi: number, ticks: number, durationTicks = 480) => ({ midi, ticks, durationTicks })
+const note = (midi: number, ticks: number, durationTicks = 480): { midi: number; ticks: number; durationTicks: number; velocity?: number } => ({ midi, ticks, durationTicks })
 const file = (tracks: ReturnType<typeof note>[][], header: Partial<MidiJson['header']> = {}): MidiJson => ({
   header: { ppq: 480, tempos: [{ bpm: 90 }], timeSignatures: [{ timeSignature: [4, 4] }], ...header },
   tracks: tracks.map((notes) => ({ notes })),
@@ -24,7 +24,7 @@ describe('chartFromMidiJson', () => {
       [72, 'L'],
     ])
   })
-  it('leaves out drum tracks', () => {
+  it('never puts drums on the keys; they play along', () => {
     const midi = file([[note(60, 0)], [note(38, 0)], [note(48, 0)]])
     midi.tracks[1].channel = 9
     const c = chartFromMidiJson(midi, 't')
@@ -32,19 +32,34 @@ describe('chartFromMidiJson', () => {
       [48, 'L'],
       [60, 'R'],
     ])
+    expect(c.backing).toEqual([{ pitch: 38, startBeat: 0, durationBeats: 1, voice: 'drums', velocity: 0.7 }])
     expect(describeTracks(midi).map((t) => [t.instrument, t.role])).toEqual([
       ['Piano', 'R'],
-      ['Drums', 'off'],
+      ['Drums', 'band'],
       ['Piano', 'L'],
     ])
+    // Even when asked to, drums are not given to a hand.
+    expect(chartFromMidiJson(midi, 't', { 0: 'R', 1: 'L', 2: 'off' }).notes.map((n) => n.pitch)).toEqual([60])
   })
-  it('in a band arrangement, plays only the piano tracks', () => {
-    const midi = file([[note(72, 0)], [note(40, 0)], [note(64, 0)]])
+  it('in a band arrangement, gives you the piano and lets the band play along', () => {
+    const midi = file([[note(72, 0)], [note(40, 0)], [{ ...note(64, 0), velocity: 0.4 }]])
     midi.tracks[0].instrument = { name: 'acoustic grand piano', family: 'piano' }
     midi.tracks[1].instrument = { name: 'electric bass (finger)', family: 'bass' }
     midi.tracks[2].instrument = { name: 'string ensemble 1', family: 'strings' }
-    expect(describeTracks(midi).map((t) => t.role)).toEqual(['split', 'off', 'off'])
-    expect(chartFromMidiJson(midi, 't').notes.map((n) => n.pitch)).toEqual([72])
+    expect(describeTracks(midi).map((t) => t.role)).toEqual(['split', 'band', 'band'])
+    const c = chartFromMidiJson(midi, 't')
+    expect(c.notes.map((n) => n.pitch)).toEqual([72])
+    expect(c.backing!.map((n) => [n.pitch, n.voice, n.velocity])).toEqual([
+      [40, 'bass', 0.7],
+      [64, 'strings', 0.4],
+    ])
+  })
+  it('skips the backing before your first note along with the empty bars', () => {
+    const midi = file([[note(60, 480 * 8)], [note(36, 0), note(36, 480 * 8)]])
+    midi.tracks[1].channel = 9
+    const c = chartFromMidiJson(midi, 't')
+    expect(c.notes[0].startBeat).toBe(0)
+    expect(c.backing!.map((n) => n.startBeat)).toEqual([0])
   })
   it('follows the roles it is given', () => {
     const midi = file([[note(72, 0)], [note(40, 0)], [note(64, 0)]])

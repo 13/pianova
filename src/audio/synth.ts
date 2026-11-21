@@ -1,3 +1,4 @@
+import type { BandSound } from './band'
 /** Relative strength of each harmonic: bright but mellow, vaguely piano-like. */
 const HARMONICS = [1, 0.55, 0.28, 0.16, 0.1, 0.06, 0.04, 0.025, 0.015, 0.01]
 const RELEASE_S = 0.18
@@ -189,11 +190,15 @@ export class Synth {
     })
   }
 
-  /** One sound of the backing band at clock time `at`; `seconds` is how long a pitched one lasts. */
-  band(sound: 'kick' | 'snare' | 'hat' | 'bass' | 'pad', at: number, velocity: number, pitches: number[] = [], seconds = 0.5): void {
+  /**
+   * One sound of the band at clock time `at`; `seconds` is how long a pitched one lasts.
+   * Piano notes played for you (`keys`) go through the accompaniment channel, the rest
+   * through the band's.
+   */
+  band(sound: BandSound, at: number, velocity: number, pitches: number[] = [], seconds = 0.5): void {
     const { ctx } = this
     const t = Math.max(ctx.currentTime, at)
-    const out = this.buses.band
+    const out = sound === 'keys' ? this.buses.accomp : this.buses.band
     // Long songs schedule thousands of band sounds: forget the ones long finished.
     if (this.bandNodes.length > 512) this.bandNodes = this.bandNodes.filter((b) => b.at > ctx.currentTime - 8)
     const track = (node: AudioScheduledSourceNode) => this.bandNodes.push({ node, at: t })
@@ -233,6 +238,20 @@ export class Synth {
       track(osc)
     } else if (sound === 'hat') {
       noise('highpass', 7500, 0.13 * velocity, 0.045)
+    } else if (sound === 'crash') {
+      noise('highpass', 5000, 0.12 * velocity, 1.1)
+    } else if (sound === 'tom') {
+      // Higher drum notes are smaller toms.
+      const top = 70 + ((pitches[0] ?? 45) - 41) * 12
+      const osc = ctx.createOscillator()
+      osc.frequency.setValueAtTime(top * 1.6, t)
+      osc.frequency.exponentialRampToValueAtTime(top, t + 0.08)
+      osc.connect(env(0.6 * velocity, 0.003, 0.02, 0.35)).connect(out)
+      osc.start(t)
+      osc.stop(t + 0.5)
+      track(osc)
+    } else if (sound !== 'bass' && sound !== 'pad') {
+      this.instrument(sound, t, velocity, pitches, Math.max(0.08, seconds), out, track)
     } else {
       const length = Math.max(0.1, seconds)
       for (const pitch of pitches) {
@@ -253,6 +272,81 @@ export class Synth {
           osc.stop(t + length + 0.8)
           track(osc)
         }
+      }
+    }
+  }
+
+  /** A pitched instrument of the band: each a few oscillators, a filter and an envelope. */
+  private instrument(
+    sound: 'keys' | 'strings' | 'organ' | 'guitar' | 'brass' | 'lead',
+    t: number,
+    velocity: number,
+    pitches: number[],
+    length: number,
+    out: AudioNode,
+    track: (node: AudioScheduledSourceNode) => void,
+  ): void {
+    const { ctx } = this
+    const v = 0.3 + 0.7 * velocity
+    for (const pitch of pitches) {
+      const freq = 440 * 2 ** ((pitch - 69) / 12)
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      const g = ctx.createGain()
+      let tail: number
+      let shapes: [OscillatorType | 'piano', number, number][]
+      if (sound === 'keys' || sound === 'guitar') {
+        // Struck or plucked: a quick attack that fades on its own, cut off at the end.
+        const decay = sound === 'keys' ? 0.35 + 2.2 * 2 ** ((48 - pitch) / 24) : 0.5
+        const peak = (sound === 'keys' ? 0.16 : 0.1) * v
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(peak, t + 0.004)
+        g.gain.setTargetAtTime(peak * 0.02, t + 0.004, decay)
+        g.gain.setTargetAtTime(0, t + length, 0.06)
+        filter.frequency.setValueAtTime(Math.min(16000, freq * (sound === 'keys' ? 6 : 8)), t)
+        filter.frequency.setTargetAtTime(Math.min(16000, freq * 2), t, decay * 0.4)
+        shapes = sound === 'keys' ? [['piano', -3, 1], ['piano', 3, 1]] : [['sawtooth', 0, 0.6], ['triangle', 2, 1]]
+        tail = 0.4
+      } else {
+        // Blown, bowed or held: swells in, holds, lets go.
+        const [peak, attack, release, cutoff] =
+          sound === 'strings' ? [0.05, 0.12, 0.35, 2200] : sound === 'organ' ? [0.045, 0.01, 0.06, 3500] : sound === 'brass' ? [0.055, 0.05, 0.12, 1800] : [0.05, 0.02, 0.1, 2600]
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(peak * v, t + attack)
+        g.gain.setValueAtTime(peak * v, t + Math.max(attack, length))
+        g.gain.setTargetAtTime(0, t + Math.max(attack, length), release / 3)
+        filter.frequency.value = cutoff
+        if (sound === 'brass') {
+          filter.frequency.setValueAtTime(cutoff * 0.3, t)
+          filter.frequency.linearRampToValueAtTime(cutoff, t + 0.06)
+        }
+        shapes =
+          sound === 'strings'
+            ? [['sawtooth', -8, 1], ['sawtooth', 8, 1]]
+            : sound === 'organ'
+              ? [['sine', 0, 1], ['sine', 1200, 0.5], ['sine', 1902, 0.3]]
+              : sound === 'brass'
+                ? [['sawtooth', -4, 1], ['sawtooth', 4, 1]]
+                : [['square', 0, 1]]
+        tail = release + 0.1
+      }
+      filter.connect(g).connect(out)
+      for (const [type, detune, level] of shapes) {
+        const osc = ctx.createOscillator()
+        if (type === 'piano') osc.setPeriodicWave(this.wave)
+        else osc.type = type
+        osc.frequency.value = freq
+        osc.detune.value = detune
+        let src: AudioNode = osc
+        if (level !== 1) {
+          const lg = ctx.createGain()
+          lg.gain.value = level
+          src = osc.connect(lg)
+        }
+        src.connect(filter)
+        osc.start(t)
+        osc.stop(t + length + tail)
+        track(osc)
       }
     }
   }

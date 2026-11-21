@@ -85,6 +85,7 @@ const roleNames = (): Record<TrackRole, string> => ({
   R: t('Right hand', 'Rechte Hand'),
   L: t('Left hand', 'Linke Hand'),
   split: t('Both hands (split at middle C)', 'Beide Hände (geteilt am mittleren C)'),
+  band: t('Plays along', 'Spielt mit'),
   off: t('Leave out', 'Weglassen'),
 })
 
@@ -97,7 +98,10 @@ function trackPicker(app: App, midi: MidiJson, title: string): View {
     const select = h(
       'select',
       { 'aria-label': `${t('Part for', 'Stimme für')} ${track.name}`, onchange: () => (roles[track.index] = select.value as TrackRole) },
-      (Object.entries(roleNames()) as [TrackRole, string][]).map(([r, name]) => h('option', { value: r, selected: r === track.role }, name)),
+      (Object.entries(roleNames()) as [TrackRole, string][])
+        // Drums can only be heard, never played on the keys.
+        .filter(([r]) => !track.percussion || r === 'band' || r === 'off')
+        .map(([r, name]) => h('option', { value: r, selected: r === track.role }, name)),
     )
     return h(
       'li',
@@ -126,7 +130,7 @@ function trackPicker(app: App, midi: MidiJson, title: string): View {
     h(
       'main',
       { class: 'path narrow' },
-      h('p', { class: 'muted' }, t('This file has several parts. Choose what each hand plays. Pianova has made a first guess; drums are always left out.', 'Diese Datei hat mehrere Stimmen. Wähle, was jede Hand spielt. Pianova hat einen ersten Vorschlag gemacht; Schlagzeug bleibt immer weg.')),
+      h('p', { class: 'muted' }, t('This file has several parts. Choose what each hand plays; the parts that play along are your band. Pianova has made a first guess.', 'Diese Datei hat mehrere Stimmen. Wähle, was jede Hand spielt; die mitspielenden Stimmen sind deine Band. Pianova hat einen ersten Vorschlag gemacht.')),
       h('ol', { class: 'track-list' }, rows),
       error,
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: play }, t('Play', 'Spielen'))),

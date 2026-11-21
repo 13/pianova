@@ -39,7 +39,11 @@ export interface PlayConfig {
   label: string
   /** Heading; defaults to the chart's title (pass a translated one for built-in content). */
   title?: string
-  /** A generated backing band (drums, bass, pad) plays along, except while the music waits. */
+  /**
+   * A generated backing band (drums, bass, pad) plays along, except while the music waits.
+   * The chart's own backing (an imported file's other instruments, notes a level leaves out)
+   * plays either way.
+   */
   band?: boolean
   /** Difficulty level of each part, shown as dots under the timeline (song lessons). */
   sectionLevels?: number[]
@@ -159,6 +163,7 @@ export class PlayView implements View {
     this.cfg = cfg = { ...cfg, chart: app.prepare(cfg.chart) }
     const { chart } = cfg
     this.sections = cfg.sections ? placeNotes(cfg.sections, chart) : songSections(chart)
+    this.bandEvents = bandFor(chart, !!cfg.band)
     this.chartHands = (['L', 'R'] as Hand[]).filter((hand) => chart.notes.some((n) => n.hand === hand))
     this.bars = Math.max(1, Math.ceil(chart.lengthBeats / chart.beatsPerBar))
     this.mode = cfg.practice?.mode ?? cfg.mode
@@ -223,7 +228,6 @@ export class PlayView implements View {
     this.highway = new Highway(canvas)
     this.highway.setRange(chart)
     this.bare = { ...chart, notes: [] }
-    if (cfg.band) this.bandEvents = bandFor(chart)
     this.applyView()
     this.syncHints()
 
@@ -299,8 +303,9 @@ export class PlayView implements View {
     this.pausedByDisconnect = false
     this.setPauseIcon(false)
     const { chart } = this.cfg
-    // The band keeps time, so it sits out while the music waits for each note.
-    const band = this.mode === 'wait' ? [] : this.bandEvents
+    // The band keeps time, so it sits out while the music waits for each note; piano
+    // notes played for you wait along with the rest of the music.
+    const band = this.mode === 'wait' ? this.bandEvents.filter((e) => e.sound === 'keys') : this.bandEvents
     this.session = new Session(
       {
         chart,
@@ -543,7 +548,7 @@ export class PlayView implements View {
       this.sections = placeNotes(this.sections, this.cfg.chart)
       this.highway.setRange(this.cfg.chart)
       this.bare = { ...this.cfg.chart, notes: [] }
-      if (this.cfg.band) this.bandEvents = bandFor(this.cfg.chart)
+      this.bandEvents = bandFor(this.cfg.chart, !!this.cfg.band)
     }
     if (patch.tempo !== undefined) this.tempo = patch.tempo
     this.restart()
@@ -568,7 +573,7 @@ export class PlayView implements View {
   private mixer(): HTMLElement {
     const { progress, synth } = this.app
     const channels: ['accomp' | 'band' | 'click', string][] = [
-      ...(this.cfg.band ? ([['band', t('Band', 'Band')]] as ['band', string][]) : []),
+      ...(this.bandEvents.some((e) => e.sound !== 'keys') ? ([['band', t('Band', 'Band')]] as ['band', string][]) : []),
       ['accomp', t('Other notes', 'Mitspielende Noten')],
       ['click', t('Click', 'Klick')],
     ]

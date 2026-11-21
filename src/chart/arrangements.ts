@@ -1,6 +1,6 @@
 import type { Chart, ChartNote, Hand } from '../core/types'
 import { both, type Text } from '../i18n'
-import { noteTiers } from './difficulty'
+import { asBacking, noteTiers } from './difficulty'
 import { harmonize, type ChordSpan } from './harmony'
 
 /**
@@ -66,6 +66,14 @@ export function melodyLine(chart: Chart): ChartNote[] {
   })
 }
 
+/** The highest note of the tune hand starting at `beat`. */
+function topAt(chart: Chart, beat: number): number {
+  const hand = tuneHand(chart)
+  let top = -Infinity
+  for (const n of chart.notes) if (n.hand === hand && Math.abs(n.startBeat - beat) < EPS) top = Math.max(top, n.pitch)
+  return top
+}
+
 /** Close-position triads that move as little as possible, kept between A2 and E4. */
 export function voiceChords(spans: ChordSpan[]): number[][] {
   const voicings: number[][] = []
@@ -125,7 +133,11 @@ export function arrangement(chart: Chart, id: ArrangementId): Arranged {
   }
   const melody = melodyLine(chart)
   if (id === 'melody') {
-    const c = withNotes(chart, melody, '@melody')
+    // Everything under the tune plays along, as in the full song.
+    const shift = melody.length ? melody[0].pitch - topAt(chart, melody[0].startBeat) : 0
+    const inTune = new Set(melody.map((m) => `${m.pitch - shift}@${Math.round(m.startBeat * 1e6)}`))
+    const rest = chart.notes.filter((n) => !inTune.has(`${n.pitch}@${Math.round(n.startBeat * 1e6)}`))
+    const c = { ...withNotes(chart, melody, '@melody'), backing: [...(chart.backing ?? []), ...asBacking(rest)].sort((a, b) => a.startBeat - b.startBeat) }
     // At low levels the tune keeps its downbeats, then its beats, then everything.
     const tiers = c.notes.map((n) => (strong(n.startBeat) ? 1 : Math.abs(n.startBeat - Math.round(n.startBeat)) < EPS ? 2 : 3))
     return { chart: c, hands: ['R'], tiers }

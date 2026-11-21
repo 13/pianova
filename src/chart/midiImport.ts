@@ -1,4 +1,4 @@
-import type { Chart, ChartNote, Hand } from '../core/types'
+import type { BackingNote, Chart, ChartNote, Hand, Voice } from '../core/types'
 import { t as tx } from '../i18n'
 
 /** The part of @tonejs/midi's parsed file that we read. */
@@ -12,12 +12,12 @@ export interface MidiJson {
     name?: string
     channel?: number
     instrument?: { name?: string; family?: string; percussion?: boolean }
-    notes: { midi: number; ticks: number; durationTicks: number }[]
+    notes: { midi: number; ticks: number; durationTicks: number; velocity?: number }[]
   }[]
 }
 
-/** What to do with one track: give it to a hand, split it at middle C, or leave it out. */
-export type TrackRole = 'R' | 'L' | 'split' | 'off'
+/** What to do with one track: give it to a hand, split it at middle C, let it play along, or leave it out. */
+export type TrackRole = 'R' | 'L' | 'split' | 'band' | 'off'
 
 export interface TrackInfo {
   /** Index into `MidiJson.tracks`. */
@@ -50,10 +50,10 @@ export const MAX_BEATS = 8_000
 export const MAX_NOTE_BEATS = 32
 
 /**
- * The tracks that have notes, each with a suggested role. Drums are left out. Two
- * tracks are taken as right hand then left hand; one is split at middle C; with more,
- * the piano tracks are split and the rest (strings, bass, …) left out, unless there
- * are no piano tracks, in which case everything is split.
+ * The tracks that have notes, each with a suggested role. Two tonal tracks are taken as
+ * right hand then left hand; one is split at middle C; with more, the piano tracks are
+ * split and the rest (strings, bass, …) play along, unless there are no piano tracks, in
+ * which case everything is split. Drums always play along.
  */
 export function describeTracks(midi: MidiJson): TrackInfo[] {
   const tracks = midi.tracks
@@ -66,7 +66,7 @@ export function describeTracks(midi: MidiJson): TrackInfo[] {
         notes: t.notes.length,
         percussion,
         family: t.instrument?.family,
-        role: 'off' as TrackRole,
+        role: 'band' as TrackRole,
       }
     })
     .filter((t) => t.notes > 0)
@@ -82,6 +82,33 @@ export function describeTracks(midi: MidiJson): TrackInfo[] {
   return tracks.map(({ family: _family, ...t }) => t)
 }
 
+/** The sound a General MIDI instrument family is played with along with you. */
+export function voiceFor(track: MidiJson['tracks'][number]): Voice {
+  if (track.instrument?.percussion || track.channel === DRUM_CHANNEL) return 'drums'
+  switch (track.instrument?.family) {
+    case 'organ':
+      return 'organ'
+    case 'guitar':
+      return 'guitar'
+    case 'bass':
+      return 'bass'
+    case 'strings':
+    case 'ensemble':
+      return 'strings'
+    case 'brass':
+    case 'reed':
+      return 'brass'
+    case 'pipe':
+    case 'synth lead':
+      return 'lead'
+    case 'synth pad':
+    case 'synth effects':
+      return 'pad'
+    default:
+      return 'keys'
+  }
+}
+
 /**
  * Converts a parsed MIDI file into a chart. Positions come from ticks, so they stay
  * right in beats even when the file changes tempo; playback uses the first tempo.
@@ -92,9 +119,26 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
   const role = roles ?? Object.fromEntries(describeTracks(midi).map((t) => [t.index, t.role]))
   const seen = new Set<string>()
   const notes: ChartNote[] = []
+  const backing: BackingNote[] = []
+  const lengthOf = (ticks: number) => {
+    const beats = ticks / ppq
+    return Number.isFinite(beats) ? Math.min(MAX_NOTE_BEATS, Math.max(MIN_BEATS, beats)) : MIN_BEATS
+  }
   midi.tracks.forEach((track, t) => {
     const r = role[t] ?? 'off'
     if (r === 'off') return
+    if (r === 'band') {
+      const voice = voiceFor(track)
+      for (const n of track.notes) {
+        if (!Number.isFinite(n.ticks) || n.ticks < 0 || !(n.midi >= 0 && n.midi <= 127)) continue
+        const velocity = typeof n.velocity === 'number' && Number.isFinite(n.velocity) ? Math.max(0.05, Math.min(1, n.velocity)) : 0.7
+        backing.push({ pitch: n.midi, startBeat: n.ticks / ppq, durationBeats: lengthOf(n.durationTicks), voice, velocity })
+        if (backing.length > MAX_NOTES) throw new Error(tooMany())
+      }
+      return
+    }
+    // Drums are never played on the keys.
+    if (voiceFor(track) === 'drums') return
     for (const n of track.notes) {
       if (n.midi < PIANO_LOW || n.midi > PIANO_HIGH) continue
       if (!Number.isFinite(n.ticks) || n.ticks < 0) continue
@@ -102,9 +146,7 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
       if (seen.has(key)) continue
       seen.add(key)
       const hand: Hand = r === 'split' ? (n.midi >= MIDDLE_C ? 'R' : 'L') : r
-      const beats = n.durationTicks / ppq
-      const durationBeats = Number.isFinite(beats) ? Math.min(MAX_NOTE_BEATS, Math.max(MIN_BEATS, beats)) : MIN_BEATS
-      notes.push({ pitch: n.midi, startBeat: n.ticks / ppq, durationBeats, hand })
+      notes.push({ pitch: n.midi, startBeat: n.ticks / ppq, durationBeats: lengthOf(n.durationTicks), hand })
       if (notes.length > MAX_NOTES) throw new Error(tooMany())
     }
   })
@@ -115,6 +157,10 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
   const beatsPerBar = Math.max(1, Math.round((num * 4) / (den || 4))) || 4
   const lead = Math.floor(notes[0].startBeat / beatsPerBar) * beatsPerBar
   for (const n of notes) n.startBeat -= lead
+  for (const n of backing) n.startBeat -= lead
+  backing.sort((a, b) => a.startBeat - b.startBeat)
+  // An intro before your first note is skipped, like the empty bars before it.
+  const heard = backing.filter((n) => n.startBeat >= -1e-9)
 
   const bpm = midi.header.tempos[0]?.bpm
   const end = notes.reduce((m, n) => Math.max(m, n.startBeat + n.durationBeats), 0)
@@ -126,6 +172,7 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
     beatsPerBar,
     notes,
     lengthBeats: Math.max(beatsPerBar, Math.ceil(end / beatsPerBar - 1e-9) * beatsPerBar),
+    ...(heard.length ? { backing: heard } : {}),
   }
 }
 

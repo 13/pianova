@@ -1,4 +1,4 @@
-import type { Chart, Hand } from '../core/types'
+import type { BackingNote, Chart, ChartNote, Hand } from '../core/types'
 import type { Section } from './sections'
 
 /**
@@ -56,9 +56,18 @@ export interface Arrangement {
   source: number[]
 }
 
+/** How loud the notes a level leaves out sound, under the ones you play. */
+export const LEFT_OUT_VELOCITY = 0.5
+
+/** Notes taken out of your part, kept in the music as piano played for you. */
+export function asBacking(notes: ChartNote[], velocity = LEFT_OUT_VELOCITY): BackingNote[] {
+  return notes.map((n) => ({ pitch: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats, voice: 'keys', velocity }))
+}
+
 /**
  * The song with each part at its own level. A part never ends up empty: if its level
- * leaves nothing to play, its simplest notes are kept.
+ * leaves nothing to play, its simplest notes are kept. The notes left out still sound,
+ * played for you, so the song is always heard whole.
  */
 export function arrange(chart: Chart, sections: Section[], levels: number[], tiers = noteTiers(chart)): Arrangement {
   const keep = new Set<number>()
@@ -72,7 +81,9 @@ export function arrange(chart: Chart, sections: Section[], levels: number[], tie
     for (const i of picked) keep.add(i)
   })
   const source = chart.notes.map((_, i) => i).filter((i) => keep.has(i))
-  return { chart: { ...chart, notes: source.map((i) => chart.notes[i]) }, source }
+  const left = asBacking(chart.notes.filter((_, i) => !keep.has(i)))
+  const backing = [...(chart.backing ?? []), ...left].sort((a, b) => a.startBeat - b.startBeat)
+  return { chart: { ...chart, notes: source.map((i) => chart.notes[i]), ...(backing.length ? { backing } : {}) }, source }
 }
 
 /** How many of a part's notes are played at a level. */
