@@ -1,8 +1,9 @@
-import { isBlack, midiToLetter } from '../core/pitch'
+import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, rgba, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
+import { noteLetter } from '../i18n'
 
 /** Strength of the perspective squeeze towards the horizon. */
 const DEPTH = 1.9
@@ -236,7 +237,7 @@ export class Highway2D implements HighwayRenderer {
       g.stroke()
 
       // Finger number (or note name) sits on the leading end once it is readable.
-      const label = n.finger ? String(n.finger) : this.labels ? midiToLetter(n.pitch) : ''
+      const label = n.finger ? String(n.finger) : this.labels ? noteLetter(n.pitch) : ''
       const size = 17 * c.scale
       if (label && active && state === 'pending' && ahead > -0.05 && size >= 9 && d.y - a.y > size * 1.5) {
         g.fillStyle = 'rgba(6, 10, 30, 0.82)'
@@ -397,7 +398,7 @@ export class Highway2D implements HighwayRenderer {
     if (isC || (this.labels && whiteW >= 30)) {
       g.fillStyle = lit ? 'rgba(10, 20, 40, 0.7)' : isC ? 'rgba(70, 66, 60, 0.85)' : 'rgba(70, 66, 60, 0.42)'
       g.font = `${isC ? 'italic 600' : '500'} ${Math.min(isC ? 19 : 14, whiteW * 0.34)}px ${FONT}`
-      g.fillText(midiToLetter(p) + (isC ? String(Math.floor(p / 12) - 1) : ''), at.x, at.y)
+      g.fillText(noteLetter(p) + (isC ? String(Math.floor(p / 12) - 1) : ''), at.x, at.y)
     }
     const keyHint = this.keyHints ? labelForPitch(p, this.hintShift) : null
     if (keyHint && whiteW >= 30) {

@@ -1,6 +1,7 @@
 import type { Chart, Hand } from '../core/types'
 import type { Grade } from '../judge/judge'
 import { COLORS } from '../render/common'
+import { t } from '../i18n'
 
 /** Fingers light up for notes this close (in beats). */
 const NEXT_BEATS = 1.6
@@ -90,7 +91,7 @@ export class HandGuide {
       palm.setAttribute('rx', '18')
       svg.prepend(palm)
       const label = document.createElement('span')
-      label.textContent = hand === 'L' ? 'Left' : 'Right'
+      label.textContent = hand === 'L' ? t('Left', 'Links') : t('Right', 'Rechts')
       wrap.append(svg, label)
       wrap.hidden = !chartHands.includes(hand)
       return { wrap, fingers }

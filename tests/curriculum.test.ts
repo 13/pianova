@@ -2,31 +2,38 @@ import { describe, expect, it } from 'vitest'
 import { nameToMidi } from '../src/core/pitch'
 import type { Chart } from '../src/core/types'
 import { LESSONS, PIECES, UNITS } from '../src/curriculum'
+import { tr } from '../src/i18n'
 
-const charts = (): { where: string; chart: Chart }[] =>
-  LESSONS.flatMap((l) => l.steps.flatMap((s) => (s.type === 'explain' ? [] : [{ where: `${l.id} ${s.title}`, chart: s.chart }])))
+const charts = (): { where: string; chart: Chart; unit: number }[] =>
+  LESSONS.flatMap((l) => l.steps.flatMap((s) => (s.type === 'explain' ? [] : [{ where: `${l.id} ${tr(s.title)}`, chart: s.chart, unit: l.unit }])))
 
 describe('curriculum', () => {
-  it('has 6 units of 4 lessons in path order with unique ids', () => {
-    expect(UNITS.map((u) => u.n)).toEqual([1, 2, 3, 4, 5, 6])
-    expect(LESSONS.map((l) => l.id)).toEqual(
-      [1, 2, 3, 4, 5, 6].flatMap((u) => [1, 2, 3, 4].map((n) => `u${u}l${n}`)),
-    )
+  it('has 8 units in path order with unique ids', () => {
+    expect(UNITS.map((u) => u.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    // Unit 1 starts at lesson 2: the old first lesson was folded into "Finding C".
+    const lessons: Record<number, number[]> = { 1: [2, 3, 4], 7: [1, 2, 3, 4, 5, 6] }
+    expect(LESSONS.map((l) => l.id)).toEqual(UNITS.flatMap((u) => (lessons[u.n] ?? [1, 2, 3, 4]).map((n) => `u${u.n}l${n}`)))
+    expect(new Set(LESSONS.map((l) => l.id)).size).toBe(LESSONS.length)
     LESSONS.forEach((l) => expect(l.id.startsWith(`u${l.unit}l`)).toBe(true))
   })
-  it('keeps every lesson note within C3–C5 so a 25-key keyboard works', () => {
-    for (const { where, chart } of charts()) {
+  it('keeps the first six units within C3–C5 (25 keys) and the rest within C2–C6 (49 keys)', () => {
+    for (const { where, chart, unit } of charts()) {
       expect(chart.notes.length, where).toBeGreaterThan(0)
-      for (const n of chart.notes) expect(n.pitch >= 48 && n.pitch <= 72, `${where}: ${n.pitch}`).toBe(true)
+      const [lo, hi] = unit <= 6 ? [48, 72] : [36, 84]
+      for (const n of chart.notes) expect(n.pitch >= lo && n.pitch <= hi, `${where}: ${n.pitch}`).toBe(true)
     }
   })
   it('ends every lesson with something scored', () => {
     for (const l of LESSONS) expect(l.steps.some((s) => s.type === 'perform'), l.id).toBe(true)
   })
-  it('judges pitch only before rhythm is taught, and timing after', () => {
+  it('judges pitch only before rhythm is taught, and timing after (new techniques may start untimed)', () => {
     for (const l of LESSONS)
       for (const s of l.steps)
-        if (s.type === 'perform') expect(s.judging, l.id).toBe(l.unit <= 2 ? 'pitch' : 'timed')
+        if (s.type === 'perform') {
+          if (l.unit <= 2) expect(s.judging, l.id).toBe('pitch')
+          else if (l.unit <= 6) expect(s.judging, l.id).toBe('timed')
+        }
+    for (const u of [7, 8]) expect(LESSONS.some((l) => l.unit === u && l.steps.some((s) => s.type === 'perform' && s.judging === 'timed'))).toBe(true)
   })
   it('never asks one hand for more than three notes at once', () => {
     for (const { where, chart } of charts()) {
@@ -41,7 +48,7 @@ describe('curriculum', () => {
         if (s.type === 'explain')
           for (const name of [...(s.highlight ?? []), ...(s.pressToContinue ? [s.pressToContinue] : [])]) {
             const midi = nameToMidi(name)
-            expect(midi >= 48 && midi <= 72, `${l.id}: ${name}`).toBe(true)
+            expect(midi >= 36 && midi <= 84, `${l.id}: ${name}`).toBe(true)
           }
   })
   it('opens every lesson with an explanation and gives a fingering for lesson notes', () => {
@@ -66,5 +73,24 @@ describe('curriculum', () => {
       expect(p.chart.notes.length, p.id).toBeGreaterThan(8)
       for (const n of p.chart.notes) expect(n.pitch >= 21 && n.pitch <= 108, p.id).toBe(true)
     }
+  })
+  it('has German for every lesson text, title and unit', () => {
+    // Song names stay as they are; any other plain-string sentence is an untranslated one.
+    const names = ['Hot Cross Buns', 'Jingle Bells']
+    const missing = (x: unknown) => typeof x === 'string' && !names.includes(x) && /[a-z]{3,} [a-z]{3,}/i.test(x)
+    for (const u of UNITS) expect(missing(u.title) || missing(u.blurb), `unit ${u.n}`).toBe(false)
+    for (const l of LESSONS) {
+      expect(missing(l.title) || missing(l.summary), l.id).toBe(false)
+      for (const s of l.steps) {
+        expect(missing(s.title), `${l.id} ${tr(s.title)}`).toBe(false)
+        if (s.type === 'explain') expect(missing(s.text), `${l.id} ${tr(s.title)}`).toBe(false)
+      }
+    }
+  })
+  it('fingers scales with the thumb passing under', () => {
+    const scale = LESSONS.find((l) => l.id === 'u7l3')!
+    const run = scale.steps.find((s) => s.type === 'perform')
+    if (!run || run.type !== 'perform') throw new Error('expected a scored run')
+    expect(run.chart.notes.slice(0, 8).map((n) => n.finger)).toEqual([1, 2, 3, 1, 2, 3, 4, 5])
   })
 })

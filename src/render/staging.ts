@@ -1,6 +1,7 @@
-import { isBlack, midiToLetter } from '../core/pitch'
+import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import type { Grade } from '../judge/judge'
+import { noteLetter, t } from '../i18n'
 
 /**
  * Pure helpers that decide what the highway shows: chord brackets, where each hand
@@ -35,8 +36,8 @@ export function chordName(pitches: number[]): string | null {
     if (root === bass) break
   }
   if (!found) return null
-  const name = midiToLetter(found.root) + found.suffix
-  return found.root === bass ? name : `${name}/${midiToLetter(bass)}`
+  const name = noteLetter(found.root) + found.suffix
+  return found.root === bass ? name : `${name}/${noteLetter(bass)}`
 }
 
 export interface ChordGroup {
@@ -135,8 +136,8 @@ export type Tone = 'ok' | 'warn' | 'bad'
 
 /** The word that floats up from a key after it is judged. */
 export function timingLabel(grade: Grade, offsetMs: number, timed: boolean): { text: string; tone: Tone } {
-  if (grade === 'miss') return { text: 'Miss', tone: 'bad' }
-  if (!timed) return { text: 'Nice', tone: 'ok' }
-  if (grade === 'perfect') return { text: 'Perfect', tone: 'ok' }
-  return { text: offsetMs < 0 ? 'Early' : 'Late', tone: 'warn' }
+  if (grade === 'miss') return { text: t('Miss', 'Daneben'), tone: 'bad' }
+  if (!timed) return { text: t('Nice', 'Gut'), tone: 'ok' }
+  if (grade === 'perfect') return { text: t('Perfect', 'Perfekt'), tone: 'ok' }
+  return { text: offsetMs < 0 ? t('Early', 'Früh') : t('Late', 'Spät'), tone: 'warn' }
 }

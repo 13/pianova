@@ -92,6 +92,16 @@ function overlap(a: Set<string>, b: Set<string>): number {
   return shared / Math.max(a.size, b.size)
 }
 
+/** The same parts laid over another version of the song (say, a simpler arrangement of it). */
+export function placeNotes(sections: Section[], chart: Chart): Section[] {
+  const placed = sections.map((s) => ({ ...s, notes: [] as number[] }))
+  chart.notes.forEach((n, i) => {
+    const part = placed.find((p) => n.startBeat < p.endBeat - 1e-6) ?? placed[placed.length - 1]
+    part?.notes.push(i)
+  })
+  return placed
+}
+
 /** The section playing at `beat` (the first before the music starts, the last after it ends). */
 export function sectionAt(sections: Section[], beat: number): number {
   for (let i = sections.length - 1; i >= 0; i--) if (beat >= sections[i].startBeat - 1e-6) return i

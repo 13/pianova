@@ -1,3 +1,4 @@
+import { getLang, t } from '../i18n'
 type Child = Node | string | number | null | undefined | false
 type Props = Record<string, unknown> | null
 
@@ -62,10 +63,13 @@ const ICONS = {
 export function stars(count: number, cls = ''): HTMLElement {
   return h(
     'span',
-    { class: `stars ${cls}`, 'aria-label': `${count} of 3 stars` },
+    { class: `stars ${cls}`, 'aria-label': t(`${count} of 3 stars`, `${count} von 3 Sternen`) },
     [0, 1, 2].map((i) => h('span', { class: i < count ? 'star lit' : 'star' }, '★')),
   )
 }
 
 /** Whole percent, rounded down so 69.9% never reads as a passing 70%. */
-export const percent = (fraction: number): string => `${Math.floor(fraction * 100 + 1e-6)}%`
+export const percent = (fraction: number): string => {
+  const n = Math.floor(fraction * 100 + 1e-6)
+  return getLang() === 'de' ? `${n} %` : `${n}%`
+}

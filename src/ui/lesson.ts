@@ -8,8 +8,15 @@ import { h, icon, type View } from './dom'
 import { midiPill } from './midiPill'
 import { PlayView, type PlayResult, type Practice } from './play'
 import { resultsCard } from './results'
+import { t, tr } from '../i18n'
 
-const STEP_NAMES: Record<Step['type'], string> = { explain: 'Learn', demo: 'Watch', drill: 'Practise', perform: 'Perform' }
+const stepName = (type: Step['type']): string =>
+  ({
+    explain: t('Learn', 'Lernen'),
+    demo: t('Watch', 'Ansehen'),
+    drill: t('Practise', 'Üben'),
+    perform: t('Perform', 'Vorspielen'),
+  })[type]
 /** The "slow it down" retry: three-quarter speed, worth at most one star. */
 const SLOW_TEMPO = 0.75
 
@@ -34,8 +41,8 @@ export class LessonView implements View {
       h(
         'header',
         { class: 'topbar' },
-        h('button', { class: 'btn ghost', onclick: () => app.goPath() }, icon('back'), 'Lessons'),
-        h('div', { class: 'lesson-title' }, h('span', { class: 'eyebrow' }, `Unit ${unit.n} · ${unit.title}`), h('strong', null, lesson.title)),
+        h('button', { class: 'btn ghost', onclick: () => app.goPath() }, icon('back'), t('Lessons', 'Lektionen')),
+        h('div', { class: 'lesson-title' }, h('span', { class: 'eyebrow' }, `${t('Unit', 'Einheit')} ${unit.n} · ${tr(unit.title)}`), h('strong', null, tr(lesson.title))),
         h('span', { class: 'spacer' }),
         this.dots,
         this.pill.el,
@@ -66,11 +73,11 @@ export class LessonView implements View {
     this.dots.replaceChildren(
       ...this.lesson.steps.map((s, i) => {
         const cls = i === index ? 'current' : i < index ? 'done' : ''
-        const name = STEP_NAMES[s.type]
+        const name = stepName(s.type)
         return h(
           'li',
           { class: cls, 'aria-current': i === index ? 'step' : undefined },
-          passed && i !== index ? h('button', { class: 'step-jump', title: `Go to: ${s.title}`, onclick: () => this.go(i) }, name) : name,
+          passed && i !== index ? h('button', { class: 'step-jump', title: `${t('Go to', 'Gehe zu')}: ${tr(s.title)}`, onclick: () => this.go(i) }, name) : name,
         )
       }),
     )
@@ -85,6 +92,7 @@ export class LessonView implements View {
     const play = (overrides: { onFinish(r: PlayResult): void }) =>
       new PlayView(this.app, {
         chart: step.chart,
+        title: tr(this.lesson.title),
         mode: step.type === 'demo' ? 'demo' : step.type === 'drill' || step.judging === 'pitch' ? 'wait' : 'timed',
         hands: step.type === 'demo' ? undefined : step.hands,
         tempoScale: slow ? SLOW_TEMPO : 1,
@@ -92,7 +100,7 @@ export class LessonView implements View {
         tools: step.type === 'drill',
         metronome: timedLesson,
         scored: step.type === 'perform',
-        label: `Lesson ${String(LESSONS.indexOf(this.lesson) + 1).padStart(2, '0')} • ${STEP_NAMES[step.type]}${slow ? ', slower' : ''}`,
+        label: `${t('Lesson', 'Lektion')} ${String(LESSONS.indexOf(this.lesson) + 1).padStart(2, '0')} • ${stepName(step.type)}${slow ? t(', slower', ', langsamer') : ''}`,
         onSkip: step.type === 'perform' ? undefined : next,
         onExit: () => this.app.goPath(),
         ...overrides,
@@ -102,9 +110,9 @@ export class LessonView implements View {
       this.mount(
         play({
           onFinish: () =>
-            this.between('Your turn', 'Next you will play it yourself. The music waits for you, so take all the time you need.', [
-              { label: 'I am ready', primary: true, onclick: next },
-              { label: 'Watch again', onclick: () => this.go(index) },
+            this.between(t('Your turn', 'Du bist dran'), t('Next you will play it yourself. The music waits for you, so take all the time you need.', 'Jetzt spielst du selbst. Die Musik wartet auf dich, nimm dir also alle Zeit, die du brauchst.'), [
+              { label: t('I am ready', 'Ich bin bereit'), primary: true, onclick: next },
+              { label: t('Watch again', 'Nochmal ansehen'), onclick: () => this.go(index) },
             ]),
         }),
       )
@@ -112,10 +120,10 @@ export class LessonView implements View {
       this.mount(
         play({
           onFinish: (result) =>
-            this.between('That is the idea', 'Run it again as often as you like. When it feels comfortable, play it for a score.', [
-              { label: 'Play for a score', primary: true, onclick: next },
+            this.between(t('That is the idea', 'So geht das'), t('Run it again as often as you like. When it feels comfortable, play it for a score.', 'Wiederhole es, so oft du magst. Wenn es sich gut anfühlt, spiel es für eine Wertung.'), [
+              { label: t('Play for a score', 'Für Wertung spielen'), primary: true, onclick: next },
               // Same tempo, hands and loop as the run just played.
-              { label: 'Practise again', onclick: () => this.go(index, false, result.practice) },
+              { label: t('Practise again', 'Nochmal üben'), onclick: () => this.go(index, false, result.practice) },
             ]),
         }),
       )
@@ -152,32 +160,32 @@ export class LessonView implements View {
     const nextLesson = LESSONS[LESSONS.indexOf(this.lesson) + 1]
     const passed = earned > 0
     // Retrying keeps the tempo you chose; the other tempo is always one click away.
-    const retry = { label: passed ? 'Play again' : 'Try again', primary: !passed, onclick: () => this.go(this.index, slow) }
+    const retry = { label: passed ? t('Play again', 'Nochmal spielen') : t('Try again', 'Nochmal versuchen'), primary: !passed, onclick: () => this.go(this.index, slow) }
     const otherTempo = slow
-      ? { label: 'Full speed', onclick: () => this.go(this.index) }
-      : { label: 'Slow it down', onclick: () => this.go(this.index, true) }
+      ? { label: t('Full speed', 'Volles Tempo'), onclick: () => this.go(this.index) }
+      : { label: t('Slow it down', 'Langsamer'), onclick: () => this.go(this.index, true) }
     const onward = !isLastStep
-      ? { label: 'Continue', primary: true, onclick: () => this.go(this.index + 1) }
+      ? { label: t('Continue', 'Weiter'), primary: true, onclick: () => this.go(this.index + 1) }
       : nextLesson
-        ? { label: 'Next lesson', primary: true, onclick: () => this.app.goLesson(nextLesson) }
-        : { label: 'Finish the course', primary: true, onclick: () => this.app.goPath() }
+        ? { label: t('Next lesson', 'Nächste Lektion'), primary: true, onclick: () => this.app.goLesson(nextLesson) }
+        : { label: t('Finish the course', 'Kurs abschließen'), primary: true, onclick: () => this.app.goPath() }
 
     this.mount({
       el: h(
         'div',
         { class: 'centered' },
         resultsCard({
-          title: this.lesson.title,
+          title: tr(this.lesson.title),
           summary: result.summary,
           stars: earned,
           timed: step.judging === 'timed',
           pass,
-          note: slow && passed ? 'Passed at a slower tempo, which earns one star. Play it at full speed for more.' : undefined,
+          note: slow && passed ? t('Passed at a slower tempo, which earns one star. Play it at full speed for more.', 'Im langsameren Tempo bestanden, das gibt einen Stern. Spiel im vollen Tempo für mehr.') : undefined,
           actions: [
             ...(passed ? [onward] : []),
             retry,
             ...(step.judging === 'timed' && (slow || earned < 2) ? [otherTempo] : []),
-            { label: 'Back to lessons', onclick: () => this.app.goPath() },
+            { label: t('Back to lessons', 'Zurück zu den Lektionen'), onclick: () => this.app.goPath() },
           ],
         }),
       ),
@@ -190,8 +198,8 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
   const canvas = h('canvas', { class: 'stage-canvas' })
   const target = step.pressToContinue ? nameToMidi(step.pressToContinue) : null
   let found = target === null
-  const button = h('button', { class: 'btn primary', disabled: !found, onclick: next }, 'Continue')
-  const prompt = h('p', { class: 'prompt', hidden: found }, 'Find the glowing key and press it.')
+  const button = h('button', { class: 'btn primary', disabled: !found, onclick: next }, t('Continue', 'Weiter'))
+  const prompt = h('p', { class: 'prompt', hidden: found }, t('Find the glowing key and press it.', 'Finde die leuchtende Taste und drück sie.'))
 
   const el = h(
     'div',
@@ -200,8 +208,8 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
     h(
       'div',
       { class: 'card explain-card' },
-      h('h2', null, step.title),
-      step.text.split('\n\n').map((para) => h('p', null, para)),
+      h('h2', null, tr(step.title)),
+      tr(step.text).split('\n\n').map((para) => h('p', null, para)),
       prompt,
       h('div', { class: 'row' }, button),
     ),
@@ -210,7 +218,8 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
   const highway = new Highway(canvas)
   highway.setRange(null)
   const highlight = new Map<number, Hand | 'hint'>((step.highlight ?? []).map((name) => [nameToMidi(name), 'hint']))
-  const setOptions = () => highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys, hintShift: app.input.octaveShift })
+  const setOptions = () =>
+    highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys, hintShift: app.input.octaveShift, keys: app.keyboard })
   setOptions()
 
   let raf = 0
@@ -227,11 +236,13 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
     found = true
     highway.flash(pitch, 'perfect')
     button.disabled = false
-    prompt.textContent = 'That is the one.'
+    prompt.textContent = t('That is the one.', 'Genau die.')
     button.focus()
   })
   const onKey = (e: KeyboardEvent) => {
-    if (e.code === 'Enter' && found && document.activeElement !== button) next()
+    // Enter carries on from anywhere, unless another control has focus and wants the Enter itself.
+    const free = !document.activeElement || document.activeElement === document.body
+    if (e.code === 'Enter' && found && free) next()
   }
   window.addEventListener('keydown', onKey)
 

@@ -19,6 +19,8 @@ export interface SessionOptions {
   latencyMs?: number
   /** Click on every beat. Always on in timed mode; opt-in for demos of timed music. */
   metronome?: boolean
+  /** Extra sounds on the beat grid (a backing band), scheduled like auto-played notes. */
+  extras?: { beat: number }[]
 }
 
 export interface SessionEvents {
@@ -32,7 +34,10 @@ export interface SessionEvents {
   /** A long note was let go of too soon. */
   short(noteIndex: number): void
   finished(): void
-  looped(): void
+  /** Went round the loop again; `pass` scores the time round just finished. */
+  looped(pass: Summary): void
+  /** One of `extras` (by its index there) is due at clock time `at`. */
+  extra(index: number, at: number): void
 }
 
 /** A frame gap longer than this (hidden tab, debugger) is treated as a pause. */
@@ -91,6 +96,10 @@ export class Session {
   private onAt: number[] = []
   private clickAt: { beat: number; at: number }[] = []
   private sounding = new Map<number, Hand>()
+  /** Extras inside the range, in time order, with their index in the options. */
+  private readonly extras: { beat: number; index: number }[]
+  private extraPos = 0
+  private extraAt: number[] = []
   private nextClick = 0
   /** Clock time that `beat` corresponds to. */
   private lastNow = 0
@@ -136,6 +145,10 @@ export class Session {
     })
     this.ons.sort((a, b) => a.beat - b.beat)
     this.offs.sort((a, b) => a.beat - b.beat)
+    this.extras = (opts.extras ?? [])
+      .map((e, index) => ({ beat: e.beat, index }))
+      .filter((e) => inRange(e.beat))
+      .sort((a, b) => a.beat - b.beat)
     this.reset(0)
   }
 
@@ -231,6 +244,12 @@ export class Session {
       this.sounding.set(e.pitch, e.hand)
       this.events.autoNote?.(e.pitch, true, e.hand, at)
     }
+    while (this.extraPos < this.extras.length && this.extras[this.extraPos].beat <= horizon + EPS) {
+      const e = this.extras[this.extraPos]
+      const at = timeOf(e.beat)
+      this.extraAt[this.extraPos++] = at
+      this.events.extra?.(e.index, at)
+    }
     while (this.offPos < this.offs.length && this.offs[this.offPos].beat <= this.beat + EPS) {
       const e = this.offs[this.offPos++]
       this.sounding.delete(e.pitch)
@@ -245,8 +264,10 @@ export class Session {
 
     if (this.beat >= this.rangeEnd - EPS) {
       if (this.looping) {
+        // How the pass just finished went, taken before the reset clears it.
+        const pass = this.summary()
         this.reset(this.beat - this.rangeEnd)
-        this.events.looped?.()
+        this.events.looped?.(pass)
       } else {
         this.state = 'finished'
         this.silence(now)
@@ -312,6 +333,7 @@ export class Session {
     for (let i = pos; i < this.onPos; i++) this.sounding.delete(this.ons[i].pitch)
     this.onPos = pos
     while (this.clickAt.length && this.clickAt[this.clickAt.length - 1].at > now + EPS) this.nextClick = this.clickAt.pop()!.beat
+    while (this.extraPos > 0 && this.extraAt[this.extraPos - 1] > now + EPS) this.extraPos--
     this.events.cancel?.(now)
   }
 
@@ -325,6 +347,8 @@ export class Session {
     this.onPos = 0
     this.offPos = 0
     this.onAt = []
+    this.extraPos = 0
+    this.extraAt = []
     this.resumeAt = -Infinity
     for (const i of this.judged) {
       this.noteState[i] = 'pending'

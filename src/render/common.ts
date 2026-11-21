@@ -46,6 +46,8 @@ export interface HighwayOptions {
   labels: boolean
   keyHints: boolean
   hintShift?: number
+  /** The keys on the player's instrument (drawn in 3D; the 2D view fits the music). */
+  keys?: { lo: number; hi: number }
 }
 
 /** What both renderers (WebGL and the 2D fallback) offer the screens. */

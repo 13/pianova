@@ -1,5 +1,6 @@
 import { compileChart } from '../chart/notation'
 import type { Chart, Hand } from '../core/types'
+import { both, type Text } from '../i18n'
 import type { Lesson, Step } from './types'
 
 /** Home-position fingering: right thumb on middle C, left pinky on the C below. */
@@ -15,27 +16,34 @@ function autoFinger(line: string | undefined, hand: Hand): string | undefined {
   )
 }
 
-export function chart(id: string, title: string, bpm: number, parts: { R?: string; L?: string }): Chart {
-  return compileChart({ id, title, bpm, R: autoFinger(parts.R, 'R'), L: autoFinger(parts.L, 'L') })
+/** Charts keep an English title; screens show the lesson's or piece's title in the current language. */
+export function chart(id: string, title: Text, bpm: number, parts: { R?: string; L?: string }): Chart {
+  return compileChart({ id, title: typeof title === 'string' ? title : title.en, bpm, R: autoFinger(parts.R, 'R'), L: autoFinger(parts.L, 'L') })
 }
 
 /** Every note with the pointer finger — for the very first lessons. */
 export const pointer = (line: string): string => line.replace(/([A-G][#b]?\d)/g, '$1/2')
 
-export function say(title: string, text: string, extra: { highlight?: string[]; pressToContinue?: string } = {}): Step {
+export function say(title: Text, text: Text, extra: { highlight?: string[]; pressToContinue?: string } = {}): Step {
   return { type: 'explain', title, text, ...extra }
 }
 
 /** The standard run-through of one chart: watch it, walk it, then play it for a score. */
 export function play(c: Chart, judging: 'pitch' | 'timed', opts: { hands?: Hand[]; pass?: number } = {}): Step[] {
   return [
-    { type: 'demo', title: 'Watch and listen', chart: c },
-    { type: 'drill', title: 'Take your time', chart: c, hands: opts.hands },
-    { type: 'perform', title: judging === 'timed' ? 'Play it in time' : 'Play it through', chart: c, judging, ...opts },
+    { type: 'demo', title: both('Watch and listen', 'Anschauen und zuhören'), chart: c },
+    { type: 'drill', title: both('Take your time', 'In Ruhe üben'), chart: c, hands: opts.hands },
+    {
+      type: 'perform',
+      title: judging === 'timed' ? both('Play it in time', 'Im Takt spielen') : both('Play it through', 'Durchspielen'),
+      chart: c,
+      judging,
+      ...opts,
+    },
   ]
 }
 
-export function lesson(id: string, title: string, summary: string, steps: Step[]): Lesson {
+export function lesson(id: string, title: Text, summary: Text, steps: Step[]): Lesson {
   return { id, unit: Number(id[1]), title, summary, steps }
 }
 

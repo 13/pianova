@@ -1,5 +1,5 @@
 import { chartFromMidiJson, describeTracks, readMidiFile, type MidiJson, type TrackRole } from '../chart/midiImport'
-import type { Chart } from '../core/types'
+import type { Chart, Hand } from '../core/types'
 import { PIECES } from '../curriculum'
 import { starsFor } from '../judge/judge'
 import type { App } from './app'
@@ -7,6 +7,8 @@ import { h, icon, percent, stars, type View } from './dom'
 import { midiPill } from './midiPill'
 import { PlayView, type PlayResult, type Practice } from './play'
 import { resultsCard } from './results'
+import { songView } from './song'
+import { t, tr } from '../i18n'
 
 /** Free play: pick a built-in piece or import a MIDI file, with all practice tools. */
 export function freePlayView(app: App): View {
@@ -24,9 +26,9 @@ export function freePlayView(app: App): View {
         const { midi, title } = await readMidiFile(chosen)
         // With one track there is nothing to choose; otherwise say which part each hand plays.
         if (describeTracks(midi).length > 1) app.show(trackPicker(app, midi, title))
-        else app.show(playPiece(app, chartFromMidiJson(midi, title), null))
+        else app.show(importedSong(app, chartFromMidiJson(midi, title)))
       } catch (err) {
-        error.textContent = `Could not open "${chosen.name}": ${err instanceof Error ? err.message : 'unknown error'}.`
+        error.textContent = t(`Could not open "${chosen.name}"`, `„${chosen.name}“ ließ sich nicht öffnen`) + `: ${err instanceof Error ? err.message : t('unknown error', 'unbekannter Fehler')}.`
         error.hidden = false
       }
     },
@@ -38,31 +40,38 @@ export function freePlayView(app: App): View {
     h(
       'header',
       { class: 'topbar' },
-      h('button', { class: 'btn ghost', onclick: () => app.goPath() }, icon('back'), 'Lessons'),
-      h('strong', null, 'Free play'),
+      h('button', { class: 'btn ghost', onclick: () => app.goPath() }, icon('back'), t('Lessons', 'Lektionen')),
+      h('strong', null, t('Songs', 'Lieder')),
     ),
     h(
       'main',
       { class: 'path' },
-      h('p', { class: 'muted' }, 'Play whole pieces with every practice tool: slow the tempo, loop a few bars, or take one hand at a time.'),
+      h('p', { class: 'muted' }, t('Every song is a lesson: it starts simple and adds notes, part by part, as you play it well.', 'Jedes Lied ist eine Lektion: Es beginnt einfach und bekommt Teil für Teil mehr Noten, je besser du spielst.')),
       h(
         'div',
         { class: 'pieces' },
         PIECES.map((piece) => {
           const best = app.progress.pieceResult(piece.id)
+          const mastered = app.progress.songMastery(piece.id)
+          const info = { id: piece.id, title: tr(piece.title), composer: tr(piece.composer), chart: piece.chart, pieceId: piece.id }
           return h(
             'button',
-            { class: 'piece', onclick: () => app.show(playPiece(app, piece.chart, piece.id)) },
-            h('strong', null, piece.title),
-            h('span', { class: 'muted' }, piece.composer),
-            h('span', { class: 'piece-score' }, stars(best?.stars ?? 0), best ? `Best ${percent(best.best)}` : 'Not played yet'),
+            { class: 'piece', onclick: () => app.show(songView(app, info, () => app.goFreePlay())) },
+            h('strong', null, tr(piece.title)),
+            h('span', { class: 'muted' }, tr(piece.composer)),
+            h(
+              'span',
+              { class: 'piece-score' },
+              stars(best?.stars ?? 0),
+              mastered !== undefined ? t(`${percent(mastered)} mastered`, `${percent(mastered)} gemeistert`) : best ? `${t('Best', 'Bestwert')} ${percent(best.best)}` : t('Not played yet', 'Noch nicht gespielt'),
+            ),
           )
         }),
         h(
           'button',
           { class: 'piece import', onclick: () => file.click() },
-          h('strong', null, 'Open a MIDI file'),
-          h('span', { class: 'muted' }, 'Play any .mid file from your computer. It is not kept after you leave.'),
+          h('strong', null, t('Open a MIDI file', 'MIDI-Datei öffnen')),
+          h('span', { class: 'muted' }, t('Learn any .mid file from your computer. Its levels are remembered by its name.', 'Lerne jede .mid-Datei von deinem Computer. Ihre Stufen werden unter ihrem Namen gespeichert.')),
         ),
       ),
       file,
@@ -72,31 +81,36 @@ export function freePlayView(app: App): View {
   return { el }
 }
 
-const ROLE_NAMES: Record<TrackRole, string> = { R: 'Right hand', L: 'Left hand', split: 'Both hands (split at middle C)', off: 'Leave out' }
+const roleNames = (): Record<TrackRole, string> => ({
+  R: t('Right hand', 'Rechte Hand'),
+  L: t('Left hand', 'Linke Hand'),
+  split: t('Both hands (split at middle C)', 'Beide Hände (geteilt am mittleren C)'),
+  off: t('Leave out', 'Weglassen'),
+})
 
 /** For an imported file with several tracks: which part each hand plays. */
 function trackPicker(app: App, midi: MidiJson, title: string): View {
   const tracks = describeTracks(midi)
   const roles: Record<number, TrackRole> = Object.fromEntries(tracks.map((t) => [t.index, t.role]))
   const error = h('p', { class: 'error', role: 'alert', hidden: true })
-  const rows = tracks.map((t) => {
+  const rows = tracks.map((track) => {
     const select = h(
       'select',
-      { 'aria-label': `Part for ${t.name}`, onchange: () => (roles[t.index] = select.value as TrackRole) },
-      (Object.keys(ROLE_NAMES) as TrackRole[]).map((r) => h('option', { value: r, selected: r === t.role }, ROLE_NAMES[r])),
+      { 'aria-label': `${t('Part for', 'Stimme für')} ${track.name}`, onchange: () => (roles[track.index] = select.value as TrackRole) },
+      (Object.entries(roleNames()) as [TrackRole, string][]).map(([r, name]) => h('option', { value: r, selected: r === track.role }, name)),
     )
     return h(
       'li',
       { class: 'track-row' },
-      h('div', null, h('strong', null, t.name), h('span', { class: 'muted' }, `${t.instrument} · ${t.notes} notes`)),
+      h('div', null, h('strong', null, track.name), h('span', { class: 'muted' }, `${track.instrument} · ${track.notes} ${t('notes', 'Noten')}`)),
       select,
     )
   })
   const play = () => {
     try {
-      app.show(playPiece(app, chartFromMidiJson(midi, title, roles), null))
+      app.show(importedSong(app, chartFromMidiJson(midi, title, roles)))
     } catch (err) {
-      error.textContent = err instanceof Error && /no notes/i.test(err.message) ? 'Choose at least one track to play.' : String(err)
+      error.textContent = err instanceof Error && /no notes/i.test(err.message) ? t('Choose at least one track to play.', 'Wähle mindestens eine Spur zum Spielen.') : String(err)
       error.hidden = false
     }
   }
@@ -106,36 +120,36 @@ function trackPicker(app: App, midi: MidiJson, title: string): View {
     h(
       'header',
       { class: 'topbar' },
-      h('button', { class: 'btn ghost', onclick: () => app.goFreePlay() }, icon('back'), 'Free play'),
+      h('button', { class: 'btn ghost', onclick: () => app.goFreePlay() }, icon('back'), t('Songs', 'Lieder')),
       h('strong', null, title),
     ),
     h(
       'main',
       { class: 'path narrow' },
-      h('p', { class: 'muted' }, 'This file has several parts. Choose what each hand plays. Pianova has made a first guess; drums are always left out.'),
+      h('p', { class: 'muted' }, t('This file has several parts. Choose what each hand plays. Pianova has made a first guess; drums are always left out.', 'Diese Datei hat mehrere Stimmen. Wähle, was jede Hand spielt. Pianova hat einen ersten Vorschlag gemacht; Schlagzeug bleibt immer weg.')),
       h('ol', { class: 'track-list' }, rows),
       error,
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: play }, 'Play')),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: play }, t('Play', 'Spielen'))),
     ),
   )
   return { el }
 }
 
-function playPiece(app: App, chart: Chart, pieceId: string | null): View {
-  return playChart(app, chart, {
-    saveAs: pieceId,
-    label: pieceId ? `Free play • ${PIECES.find((p) => p.id === pieceId)?.composer ?? ''}` : 'Free play • Imported file',
-    unsaved: pieceId === null ? 'Scores for imported files are not saved.' : undefined,
-    backLabel: 'Free play',
-    back: () => app.goFreePlay(),
-    another: 'Choose another',
-  })
+/** An imported file as a song lesson; its levels are kept under its title. */
+function importedSong(app: App, chart: Chart): View {
+  return songView(app, { id: `import:${chart.title}`, title: chart.title, composer: t('Imported file', 'Importierte Datei'), chart, pieceId: null }, () => app.goFreePlay())
 }
 
 export interface PlayChartOptions {
   /** Piece id to save the best score under, or null to never save. */
   saveAs: string | null
   label: string
+  /** Heading, when it differs from the chart's own (English) title. */
+  title?: string
+  /** The hands to play at first (an arrangement may leave one hand to the music). */
+  hands?: Hand[]
+  /** Play along with the generated backing band. */
+  band?: boolean
   /** Shown on results when nothing is saved. */
   unsaved?: string
   backLabel: string
@@ -162,6 +176,9 @@ export function playChart(app: App, chart: Chart, o: PlayChartOptions): View {
     mount(
       new PlayView(app, {
         chart,
+        title: o.title,
+        hands: o.hands,
+        band: o.band,
         practice,
         mode: 'timed',
         tools: true,
@@ -182,7 +199,7 @@ export function playChart(app: App, chart: Chart, o: PlayChartOptions): View {
         'div',
         { class: 'centered' },
         resultsCard({
-          title: chart.title,
+          title: o.title ?? chart.title,
           summary: result.summary,
           stars: earned,
           timed: result.timed,
@@ -190,9 +207,9 @@ export function playChart(app: App, chart: Chart, o: PlayChartOptions): View {
             ? undefined
             : pieceId === null
               ? o.unsaved
-              : 'Practice run. Play both hands at full tempo, without Wait or Loop, to save a score.',
+              : t('Practice run. Play both hands at full tempo, without Wait or Loop, to save a score.', 'Übungsdurchgang. Spiel beide Hände im vollen Tempo, ohne Warten oder Schleife, um ein Ergebnis zu speichern.'),
           actions: [
-            { label: 'Play again', primary: true, onclick: () => start(result.practice) },
+            { label: t('Play again', 'Nochmal spielen'), primary: true, onclick: () => start(result.practice) },
             { label: o.another, onclick: o.back },
           ],
         }),

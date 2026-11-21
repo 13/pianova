@@ -42,11 +42,11 @@ describe('ProgressStore', () => {
     p.addStats([stat(1)])
     const q = new ProgressStore(kv, ids)
     expect(q.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
-    expect(q.settings).toEqual({ latencyMs: 35, volume: 0.8, labels: false, midiInputId: null })
+    expect(q.settings).toEqual({ latencyMs: 35, volume: 0.8, labels: false, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
     expect(q.stats()).toEqual([stat(1)])
   })
   it('starts with sensible default settings', () => {
-    expect(new ProgressStore(fakeKV(), ids).settings).toEqual({ latencyMs: 0, volume: 0.8, labels: true, midiInputId: null })
+    expect(new ProgressStore(fakeKV(), ids).settings).toEqual({ latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
   })
   it('starts fresh from garbage and keeps the old data as a backup', () => {
     for (const junk of ['{not json', '42', '{"version":99,"lessons":"x"}']) {
@@ -66,7 +66,7 @@ describe('ProgressStore', () => {
   it('resets a version 1 timing offset, which also covered output delay, and keeps the rest', () => {
     const old = { version: 1, lessons: { a: { stars: 2, best: 0.9 } }, settings: { latencyMs: 60, volume: 0.5, labels: false, midiInputId: 'x' } }
     const p = new ProgressStore(fakeKV({ [STORAGE_KEY]: JSON.stringify(old) }), ids)
-    expect(p.settings).toEqual({ latencyMs: 0, volume: 0.5, labels: false, midiInputId: 'x' })
+    expect(p.settings).toEqual({ latencyMs: 0, volume: 0.5, labels: false, midiInputId: 'x', keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
     expect(p.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
   })
   it('works in memory when storage is missing or refuses writes', () => {
@@ -97,5 +97,47 @@ describe('ProgressStore', () => {
     expect(p.stats()).toHaveLength(5000)
     expect(p.stats()[0].at).toBe(1000)
     expect(p.stats()[4999].at).toBe(5999)
+  })
+  it('opens whole units from the skill check, and keeps song levels', () => {
+    const kv = fakeKV()
+    const p = new ProgressStore(kv, ['a', 'b', 'c', 'd'], [1, 2, 2, 4])
+    expect(p.isUnlocked('b')).toBe(false)
+    p.setSkill(1) // knows the keys: units 1 and 2 open
+    expect(p.isUnlocked('c')).toBe(true)
+    expect(p.isUnlocked('d')).toBe(false)
+    p.saveSong('s', { levels: [2, 3], shares: [0.5, 0.2], mastery: 0.35 })
+    p.saveSong('s', { levels: [1, 3], shares: [0.5, 0.2], mastery: 0.1 })
+    const q = new ProgressStore(kv, ['a', 'b', 'c', 'd'], [1, 2, 2, 4])
+    expect(q.skill).toBe(1)
+    expect(q.song('s', 2)).toEqual({ levels: [1, 3], shares: [0.5, 0.2], mastery: 0.35 })
+    // A song now split differently starts over.
+    expect(q.song('s', 3)).toBeUndefined()
+  })
+})
+
+describe('daily practice', () => {
+  const day = (d: number) => new Date(2026, 10, d, 12)
+  it('counts the streak of days that met the goal, without breaking on an unfinished today', () => {
+    const p = new ProgressStore(fakeKV(), ['a'])
+    p.addPractice(600, day(18))
+    p.addPractice(300, day(19))
+    p.addPractice(400, day(19))
+    p.addPractice(120, day(21))
+    expect(p.practiceOn(day(19))).toBe(700)
+    // 20th missed: a streak that ended yesterday-but-one is gone.
+    expect(p.streak(day(21))).toBe(0)
+    p.addPractice(600, day(20))
+    expect(p.streak(day(21))).toBe(3)
+    p.addPractice(480, day(21))
+    expect(p.streak(day(21))).toBe(4)
+  })
+  it('remembers practice and the last song across reloads', () => {
+    const kv = fakeKV()
+    const p = new ProgressStore(kv, ['a'])
+    p.addPractice(90, day(5))
+    p.setLastSong('ode-to-joy')
+    const q = new ProgressStore(kv, ['a'])
+    expect(q.practiceOn(day(5))).toBe(90)
+    expect(q.lastSong).toBe('ode-to-joy')
   })
 })

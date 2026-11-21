@@ -5,12 +5,13 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { isBlack, midiToLetter } from '../core/pitch'
+import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
 import { COLORS, FONT, LOOKAHEAD, lighten, type FlashTiming, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
 import { chordGroups, focusRange, handZones, streakMilestone, timingLabel, type ChordGroup, type Tone } from './staging'
+import { noteLetter, t } from '../i18n'
 
 // World units: one white key is 1 wide. x runs along the keyboard, y is up, and the
 // hit line is at z = 0 with the keys towards the player (+z) and the music beyond (-z).
@@ -167,8 +168,9 @@ export class Highway3D implements HighwayRenderer {
   private h = 0
   private tanV = 0.3
 
-  private readonly lo = PIANO_LO
-  private readonly hi = PIANO_HI
+  /** The keys drawn: a full piano unless the player's instrument has fewer. */
+  private lo = PIANO_LO
+  private hi = PIANO_HI
   private whites = 0
   /** x of the middle of each key, by pitch. */
   private xs: number[] = []
@@ -376,6 +378,14 @@ export class Highway3D implements HighwayRenderer {
   }
 
   setOptions(opts: HighwayOptions): void {
+    const lo = opts.keys?.lo ?? PIANO_LO
+    const hi = opts.keys?.hi ?? PIANO_HI
+    if (lo !== this.lo || hi !== this.hi) {
+      this.lo = lo
+      this.hi = hi
+      this.buildKeys()
+      this.layout()
+    }
     this.labels = opts.labels
     this.keyHints = opts.keyHints
     this.hintShift = opts.hintShift ?? 0
@@ -433,6 +443,10 @@ export class Highway3D implements HighwayRenderer {
     }
     this.keyboard.clear()
     this.keys.clear()
+    for (const g of this.glows.values()) {
+      g.level = 0
+      g.sprite.visible = false
+    }
     this.labelKey = ''
 
     let whites = 0
@@ -725,8 +739,8 @@ export class Highway3D implements HighwayRenderer {
         if (hint) add(this.text(hint, 'hint'), 0.46, BLACK_RISE + 0.004, BLACK_LEN * 0.8)
       } else {
         const isC = p % 12 === 0
-        if (isC) add(this.text(midiToLetter(p) + String(Math.floor(p / 12) - 1), 'c'), 0.78, 0.004, KEY_LEN * 0.86)
-        else if (this.labels && keyPx >= 30) add(this.text(midiToLetter(p), 'letter'), 0.62, 0.004, KEY_LEN * 0.87)
+        if (isC) add(this.text(noteLetter(p) + String(Math.floor(p / 12) - 1), 'c'), 0.78, 0.004, KEY_LEN * 0.86)
+        else if (this.labels && keyPx >= 30) add(this.text(noteLetter(p), 'letter'), 0.62, 0.004, KEY_LEN * 0.87)
         if (hint) add(this.text(hint, 'hintDark'), 0.5, 0.004, KEY_LEN * 0.7)
       }
     }
@@ -831,7 +845,7 @@ export class Highway3D implements HighwayRenderer {
       const y = base + h / 2
 
       // Finger number (or note name) rides on the leading end.
-      const label = n.finger ? String(n.finger) : this.labels ? midiToLetter(n.pitch) : ''
+      const label = n.finger ? String(n.finger) : this.labels ? noteLetter(n.pitch) : ''
       const show = label && active && state === 'pending' && ahead > -0.05 && len > 0.6
       slot.label.visible = !!show
       if (show) {
@@ -1105,7 +1119,7 @@ export class Highway3D implements HighwayRenderer {
       m.mat.color.setRGB(0.8, 0.84, 1.7).multiplyScalar(fade * (ahead < 0.15 ? 1.6 : 1))
       m.bar.position.set(this.viewCx, 0.02, z)
       m.bar.scale.set(this.viewW + 4, 0.1, 1)
-      const tex = this.text(`Part ${s.name}`, 'chord', '#cdd2ff')
+      const tex = this.text(`${t('Part', 'Teil')} ${s.name}`, 'chord', '#cdd2ff')
       if (m.label.material.map !== tex) {
         m.label.material.map = tex
         m.label.material.needsUpdate = true
@@ -1158,7 +1172,7 @@ export class Highway3D implements HighwayRenderer {
     this.lastStreak = streak
     if (milestone) {
       this.surge = 1
-      this.popup(null, `${milestone} in a row!`, 'gold')
+      this.popup(null, t(`${milestone} in a row!`, `${milestone} in Folge!`), 'gold')
       for (let i = 0; i < 70; i++) {
         const x = this.viewCx + (Math.random() - 0.5) * this.viewW
         this.burstAt(x, 0.08, -0.1, Math.random() < 0.5 ? TONE_COLORS.gold : '#ffffff', 1, 0.2)

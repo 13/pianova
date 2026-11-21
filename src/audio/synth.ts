@@ -33,6 +33,11 @@ export class Synth {
   private wave: PeriodicWave
   private voices: Voice[] = []
   private clicks: { osc: OscillatorNode; at: number }[] = []
+  /** Mixer channels: the music played for you, the backing band, and the metronome. */
+  private buses: Record<'accomp' | 'band' | 'click', GainNode>
+  /** Band sounds scheduled ahead, so a pause or jump can take them back. */
+  private bandNodes: { node: AudioScheduledSourceNode; at: number }[] = []
+  private noise: AudioBuffer
   private sustain = false
   /** Smoothed (heard clock − performance.now()/1000). */
   private offset: number | null = null
@@ -45,6 +50,16 @@ export class Synth {
     limiter.threshold.value = -12
     limiter.ratio.value = 8
     this.master.connect(limiter).connect(this.ctx.destination)
+    const bus = (level: number) => {
+      const g = this.ctx.createGain()
+      g.gain.value = level
+      g.connect(this.master)
+      return g
+    }
+    this.buses = { accomp: bus(0.8), band: bus(0.7), click: bus(0.8) }
+    this.noise = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate)
+    const data = this.noise.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
     const imag = new Float32Array([0, ...HARMONICS])
     this.wave = this.ctx.createPeriodicWave(new Float32Array(imag.length), imag)
   }
@@ -85,8 +100,18 @@ export class Synth {
     this.master.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)), this.ctx.currentTime, 0.02)
   }
 
-  /** Starts a note now, or at clock time `at` if that is later. */
-  noteOn(pitch: number, velocity = 0.75, at?: number): void {
+  /** Mixer levels, 0..1 each. */
+  setMix(mix: { accomp?: number; band?: number; click?: number }): void {
+    for (const [name, level] of Object.entries(mix) as ['accomp' | 'band' | 'click', number | undefined][]) {
+      if (level !== undefined) this.buses[name].gain.setTargetAtTime(Math.max(0, Math.min(1, level)), this.ctx.currentTime, 0.02)
+    }
+  }
+
+  /**
+   * Starts a note now, or at clock time `at` if that is later. Notes the app plays for you
+   * (`accomp`) go through their own mixer channel; your own keys always go straight out.
+   */
+  noteOn(pitch: number, velocity = 0.75, at?: number, channel: 'keys' | 'accomp' = 'keys'): void {
     const t = Math.max(this.ctx.currentTime, at ?? 0)
     // A new strike of the same key ends the old one (at the moment the new one starts).
     this.stopVoices((v) => v.pitch === pitch && v.start <= t, 0.03, t)
@@ -118,7 +143,7 @@ export class Synth {
       osc.start(t)
       return osc
     })
-    filter.connect(gain).connect(this.master)
+    filter.connect(gain).connect(channel === 'accomp' ? this.buses.accomp : this.master)
     this.voices.push({ pitch, start: t, gain, oscs, pedalled: false })
   }
 
@@ -156,6 +181,77 @@ export class Synth {
       c.osc.stop(now)
       return false
     })
+    this.bandNodes = this.bandNodes.filter((b) => {
+      if (b.at <= Math.max(t, now)) return b.at > now - 8
+      b.node.stop(now)
+      return false
+    })
+  }
+
+  /** One sound of the backing band at clock time `at`; `seconds` is how long a pitched one lasts. */
+  band(sound: 'kick' | 'snare' | 'hat' | 'bass' | 'pad', at: number, velocity: number, pitches: number[] = [], seconds = 0.5): void {
+    const { ctx } = this
+    const t = Math.max(ctx.currentTime, at)
+    const out = this.buses.band
+    const track = (node: AudioScheduledSourceNode) => this.bandNodes.push({ node, at: t })
+    const env = (peak: number, attack: number, hold: number, release: number) => {
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, t)
+      g.gain.linearRampToValueAtTime(peak, t + attack)
+      g.gain.setTargetAtTime(0, t + attack + hold, release / 3)
+      return g
+    }
+    const noise = (filter: BiquadFilterType, freq: number, peak: number, length: number) => {
+      const src = ctx.createBufferSource()
+      src.buffer = this.noise
+      const f = ctx.createBiquadFilter()
+      f.type = filter
+      f.frequency.value = freq
+      src.connect(f).connect(env(peak, 0.002, 0, length)).connect(out)
+      src.start(t, Math.random() * 0.5)
+      src.stop(t + length + 0.1)
+      track(src)
+    }
+    if (sound === 'kick') {
+      const osc = ctx.createOscillator()
+      osc.frequency.setValueAtTime(130, t)
+      osc.frequency.exponentialRampToValueAtTime(42, t + 0.12)
+      osc.connect(env(0.9 * velocity, 0.003, 0.02, 0.3)).connect(out)
+      osc.start(t)
+      osc.stop(t + 0.45)
+      track(osc)
+    } else if (sound === 'snare') {
+      noise('highpass', 1400, 0.38 * velocity, 0.16)
+      const osc = ctx.createOscillator()
+      osc.frequency.value = 190
+      osc.connect(env(0.22 * velocity, 0.002, 0, 0.08)).connect(out)
+      osc.start(t)
+      osc.stop(t + 0.15)
+      track(osc)
+    } else if (sound === 'hat') {
+      noise('highpass', 7500, 0.13 * velocity, 0.045)
+    } else {
+      const length = Math.max(0.1, seconds)
+      for (const pitch of pitches) {
+        const freq = 440 * 2 ** ((pitch - 69) / 12)
+        const filter = ctx.createBiquadFilter()
+        filter.type = 'lowpass'
+        filter.frequency.value = sound === 'bass' ? 700 : 1300
+        const g = sound === 'bass' ? env(0.42 * velocity, 0.01, length * 0.8, 0.12) : env(0.045 * velocity, 0.3, length * 0.7, 0.5)
+        filter.connect(g).connect(out)
+        const shapes: [OscillatorType, number][] = sound === 'bass' ? [['triangle', 0], ['sine', -1200]] : [['sawtooth', -7], ['sawtooth', 7]]
+        for (const [type, detune] of shapes) {
+          const osc = ctx.createOscillator()
+          osc.type = type
+          osc.frequency.value = freq
+          osc.detune.value = detune
+          osc.connect(filter)
+          osc.start(t)
+          osc.stop(t + length + 0.8)
+          track(osc)
+        }
+      }
+    }
   }
 
   /** Metronome tick; the first beat of the bar is higher. `at` schedules it on the clock. */
@@ -166,7 +262,7 @@ export class Synth {
     osc.frequency.value = accent ? 1760 : 1175
     gain.gain.setValueAtTime(accent ? 0.35 : 0.22, t)
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05)
-    osc.connect(gain).connect(this.master)
+    osc.connect(gain).connect(this.buses.click)
     osc.start(t)
     osc.stop(t + 0.06)
     this.clicks = this.clicks.filter((c) => c.at > this.ctx.currentTime - 1)
