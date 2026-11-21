@@ -99,8 +99,10 @@ export class Navigator {
     if (!captured && !this.root.contains(document.activeElement)) this.primary(true)?.focus({ preventScroll: true })
   }
 
-  /** Music is playing: keys are notes, not commands. */
+  /** Music is playing (or keys are being measured): keys are notes, not commands. */
   private captured(): boolean {
+    // Measuring the keyboard: its lowest key is the answer, not "back".
+    if (this.root.querySelector('.measure.listening')) return true
     const play = this.root.querySelector('.play')
     if (!play) return false
     // A paused game shows a card with buttons; arrows may move between them.

@@ -406,3 +406,19 @@ span.chip.on { color: #eafff2; border-color: rgba(74, 222, 128, 0.7); background
 }
 .mixer-row { display: grid; grid-template-columns: 1fr 130px; align-items: center; gap: 12px; font-size: 0.85rem; color: var(--muted); }
 .mixer-row input { width: 100%; }
+
+/* ---- measuring the keyboard ---- */
+.measure { text-align: center; gap: 18px; }
+.measure h1 { margin: 24px 0 0; }
+.measure .lede { margin: 0; }
+.measure-note { font-size: 3rem; font-weight: 700; letter-spacing: 0.02em; color: var(--gold); min-height: 1.2em; }
+.measure-hint { min-height: 1.4em; color: #ffd591; }
+.measure .row { justify-content: center; }
+.measure-strip { position: relative; display: flex; height: 84px; margin: 4px 0; border-radius: 6px; overflow: hidden; background: #0a0c1c; }
+.measure-strip .mk.white { flex: 1 1 0; background: #3a3f5c; border-right: 1px solid #0a0c1c; }
+.measure-strip .mk.black { flex: 0 0 0; position: relative; z-index: 1; }
+.measure-strip .mk.black::after { content: ''; position: absolute; left: -4px; width: 8px; height: 52px; background: #14172b; border-radius: 0 0 2px 2px; }
+.measure-strip .mk.white.in { background: #e9ecf8; }
+.measure-strip .mk.black.in::after { background: #22263f; }
+.measure-strip .mk.white.end { background: var(--gold); }
+.measure-strip .mk.black.end::after { background: var(--gold); }

@@ -23,6 +23,21 @@ export const KEYBOARDS: KeyboardModel[] = [
 
 export const FULL_PIANO: KeyboardModel = KEYBOARDS.find((k) => k.id === '88')!
 
+/** The lowest and highest key of an instrument, as measured by playing them. */
+export interface KeyRange {
+  lo: number
+  hi: number
+}
+
+/** The smallest keyboard Pianova accepts: two octaves. */
+export const MIN_KEYS = 25
+
+/**
+ * Instruments known to have their own speakers even when the USB name does not say which
+ * model it is (a Piaggero reports itself as just "Piaggero MIDI 1").
+ */
+const SPEAKER_NAMES = /piaggero|clavinova|arius|digital piano|e-?piano/i
+
 /** The instrument a connected device's name points to, if Pianova knows it. */
 export function detectKeyboard(names: string[]): KeyboardModel | null {
   for (const name of names) {
@@ -32,11 +47,39 @@ export function detectKeyboard(names: string[]): KeyboardModel | null {
   return null
 }
 
+/** Whether a connected device is an instrument with its own sound. */
+export function hasSpeakers(names: string[]): boolean {
+  return detectKeyboard(names)?.speakers ?? names.some((n) => SPEAKER_NAMES.test(n))
+}
+
+/** A measured range is usable: real MIDI pitches, low below high, at least two octaves. */
+export function validRange(range: unknown): range is KeyRange {
+  if (typeof range !== 'object' || range === null) return false
+  const { lo, hi } = range as Record<string, unknown>
+  return Number.isInteger(lo) && Number.isInteger(hi) && (lo as number) >= 0 && (hi as number) <= 127 && (hi as number) - (lo as number) + 1 >= MIN_KEYS
+}
+
+/** The standard size a measured range matches ("76 keys (E to G)"), if any. */
+export function standardSize(range: KeyRange): KeyboardModel | null {
+  return KEYBOARDS.find((k) => !k.match && k.lo === range.lo && k.hi === range.hi) ?? null
+}
+
+/** The instrument as measured, named by its size. */
+export function measuredKeyboard(range: KeyRange, deviceNames: string[]): KeyboardModel {
+  const n = range.hi - range.lo + 1
+  return { id: 'measured', name: `${n} keys (measured)`, lo: range.lo, hi: range.hi, speakers: hasSpeakers(deviceNames) }
+}
+
 /**
- * The keyboard to draw and fit music to: the one chosen in settings, else the one
- * recognised from its USB name, else a full piano.
+ * The keyboard to draw and fit music to: the one chosen in settings (or measured), else
+ * the one recognised from its USB name, else the measured one, else a full piano.
  */
-export function chooseKeyboard(setting: string, deviceNames: string[]): KeyboardModel {
+export function chooseKeyboard(setting: string, deviceNames: string[], measured: KeyRange | null = null): KeyboardModel {
+  if (setting === 'measured') return measured ? measuredKeyboard(measured, deviceNames) : (detectKeyboard(deviceNames) ?? FULL_PIANO)
   if (setting !== 'auto') return KEYBOARDS.find((k) => k.id === setting) ?? FULL_PIANO
-  return detectKeyboard(deviceNames) ?? FULL_PIANO
+  const found = detectKeyboard(deviceNames)
+  if (found) return found
+  if (measured) return measuredKeyboard(measured, deviceNames)
+  // Unknown size: a full piano, but still quiet if it is an instrument with its own sound.
+  return hasSpeakers(deviceNames) ? { ...FULL_PIANO, speakers: true } : FULL_PIANO
 }

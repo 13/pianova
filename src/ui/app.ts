@@ -6,7 +6,7 @@ import { withFingering } from '../chart/fingering'
 import { fitToRange } from '../chart/fit'
 import type { Chart } from '../core/types'
 import { InputHub } from '../input/hub'
-import { chooseKeyboard, type KeyboardModel } from '../input/instruments'
+import { chooseKeyboard, detectKeyboard, type KeyboardModel } from '../input/instruments'
 import { loadKeyboardLayout } from '../input/keyboard'
 import { ProgressStore, type KV } from '../progress/store'
 import { h, icon, type View } from './dom'
@@ -15,6 +15,7 @@ import { freePlayView, playChart } from './freeplay'
 import { LessonView } from './lesson'
 import { Navigator } from './nav'
 import { pathView } from './path'
+import { measureView } from './measure'
 import { settingsView } from './settings'
 import { skillCheckView } from './skillCheck'
 import { noteName, resolveLang, setLang, t, tr } from '../i18n'
@@ -110,9 +111,25 @@ export class App {
     this.show(settingsView(this))
   }
 
+  /** Press the lowest and highest key, so Pianova knows the keyboard's size. */
+  goMeasure(back: () => void = () => this.goSettings()): void {
+    this.show(measureView(this, back))
+  }
+
+  /**
+   * A MIDI keyboard is connected whose size Pianova cannot tell from its name, and it has
+   * not been measured: worth asking the player to measure it.
+   */
+  get keyboardUnknown(): boolean {
+    const { keyboard, measuredKeys } = this.progress.settings
+    const names = this.input.status.inputs.map((i) => i.name)
+    return names.length > 0 && keyboard === 'auto' && !measuredKeys && !detectKeyboard(names)
+  }
+
   /** The instrument being played: chosen in settings, or recognised from its USB name. */
   get keyboard(): KeyboardModel {
-    return chooseKeyboard(this.progress.settings.keyboard, this.input.status.inputs.map((i) => i.name))
+    const { keyboard, measuredKeys } = this.progress.settings
+    return chooseKeyboard(keyboard, this.input.status.inputs.map((i) => i.name), measuredKeys)
   }
 
   /**

@@ -2,7 +2,7 @@ import type { MidiStatus } from '../input/hub'
 import { detectKeyboard, KEYBOARDS } from '../input/instruments'
 import type { App } from './app'
 import { h, icon, type View } from './dom'
-import { LANGUAGES, resolveLang, setLang, t } from '../i18n'
+import { LANGUAGES, noteName, resolveLang, setLang, t } from '../i18n'
 
 const CLICKS = 12
 const LEAD_IN = 4
@@ -124,8 +124,12 @@ export function settingsView(app: App): View {
       (progress.settings.keyboard === 'auto'
         ? found
           ? `${t('Recognised', 'Erkannt')}: ${found.name}. `
-          : t('Not recognised from its USB name, so a full 88-key piano is shown. Choose yours above if it has fewer keys. ', 'Am USB-Namen nicht erkannt, daher wird ein volles Klavier mit 88 Tasten gezeigt. Wähle oben dein Modell, falls es weniger Tasten hat. ')
-        : '') + t(
+          : progress.settings.measuredKeys
+            ? t('Using the keys you measured. ', 'Die gemessenen Tasten werden verwendet. ')
+            : t('Not recognised from its USB name, so a full 88-key piano is shown. Measure it, or choose yours above. ', 'Am USB-Namen nicht erkannt, daher wird ein volles Klavier mit 88 Tasten gezeigt. Miss es aus oder wähle oben dein Modell. ')
+        : progress.settings.keyboard === 'measured'
+          ? `${t('Measured', 'Gemessen')}: ${noteName(k.lo)} – ${noteName(k.hi)}. `
+          : '') + t(
           `Showing ${k.hi - k.lo + 1} keys; music outside them is moved by octaves to fit.`,
           `${k.hi - k.lo + 1} Tasten werden gezeigt; Musik außerhalb wird oktavweise verschoben.`,
         )
@@ -140,8 +144,15 @@ export function settingsView(app: App): View {
       },
     },
     h('option', { value: 'auto', selected: settings.keyboard === 'auto' }, t('Recognise it automatically', 'Automatisch erkennen')),
+    settings.measuredKeys &&
+      h(
+        'option',
+        { value: 'measured', selected: settings.keyboard === 'measured' },
+        t(`As measured: ${settings.measuredKeys.hi - settings.measuredKeys.lo + 1} keys`, `Wie gemessen: ${settings.measuredKeys.hi - settings.measuredKeys.lo + 1} Tasten`),
+      ),
     KEYBOARDS.map((k) => h('option', { value: k.id, selected: settings.keyboard === k.id }, k.name)),
   )
+  const measure = h('button', { class: 'btn', onclick: () => app.goMeasure() }, icon('target'), t('Measure my keyboard', 'Mein Keyboard ausmessen'))
   renderKeyboardNote()
   const offKeyboard = input.onStatus(renderKeyboardNote)
   const soundKeys = h(
@@ -193,7 +204,7 @@ export function settingsView(app: App): View {
       { class: 'path narrow' },
       row(t('Language', 'Sprache'), language),
       row(t('MIDI keyboard', 'MIDI-Keyboard'), device, deviceNote),
-      row(t('Your keyboard', 'Dein Keyboard'), keyboard, keyboardNote),
+      row(t('Your keyboard', 'Dein Keyboard'), h('div', { class: 'row' }, keyboard, measure), keyboardNote),
       row(
         t('Sound of your keys', 'Klang deiner Tasten'),
         soundKeys,

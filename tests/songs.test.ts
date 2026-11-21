@@ -4,7 +4,7 @@ import { fitToRange } from '../src/chart/fit'
 import { compileChart } from '../src/chart/notation'
 import { songSections } from '../src/chart/sections'
 import { nameToMidi as m } from '../src/core/pitch'
-import { chooseKeyboard, detectKeyboard } from '../src/input/instruments'
+import { chooseKeyboard, detectKeyboard, standardSize, validRange } from '../src/input/instruments'
 import { afterPass, levelsAfterRun, startDrill } from '../src/practice/trainer'
 
 const song = (R: string, L?: string) => compileChart({ id: 's', title: 'S', bpm: 100, R, L })
@@ -94,6 +94,24 @@ describe('keyboards', () => {
     expect(detectKeyboard(['Some Controller'])).toBeNull()
     expect(chooseKeyboard('auto', ['Some Controller']).id).toBe('88')
     expect(chooseKeyboard('61', ['Yamaha NP-32']).id).toBe('61')
+  })
+  it('uses a measured keyboard when the device name does not say its size', () => {
+    // A Piaggero reports itself as just "Piaggero MIDI 1".
+    expect(chooseKeyboard('auto', ['Piaggero MIDI 1'])).toMatchObject({ id: '88', speakers: true })
+    const measured = chooseKeyboard('auto', ['Piaggero MIDI 1'], { lo: m('E1'), hi: m('G7') })
+    expect(measured).toMatchObject({ id: 'measured', lo: m('E1'), hi: m('G7'), speakers: true })
+    expect(chooseKeyboard('measured', ['Some Controller'], { lo: 36, hi: 96 })).toMatchObject({ id: 'measured', lo: 36, hi: 96, speakers: false })
+    // A recognised model still wins in automatic mode; choosing "measured" wins over it.
+    expect(chooseKeyboard('auto', ['Yamaha NP-12'], { lo: 21, hi: 108 }).id).toBe('np12')
+    expect(chooseKeyboard('measured', ['Yamaha NP-12'], { lo: 21, hi: 108 }).id).toBe('measured')
+  })
+  it('accepts only real, at-least-two-octave ranges as measurements', () => {
+    expect(validRange({ lo: 28, hi: 103 })).toBe(true)
+    expect(validRange({ lo: 60, hi: 72 })).toBe(false)
+    expect(validRange({ lo: 72, hi: 28 })).toBe(false)
+    expect(validRange({ lo: 1.5, hi: 90 })).toBe(false)
+    expect(validRange(null)).toBe(false)
+    expect(standardSize({ lo: 28, hi: 103 })?.id).toBe('76')
   })
   it('fits music onto a smaller keyboard, keeping each hand in shape', () => {
     const c = song('C7 E7 G7 C8', 'C1 G1')

@@ -13,6 +13,18 @@ export function pathView(app: App): View {
 
   const pill = h('span', { class: 'pill' })
   const banner = h('div', { class: 'banner', hidden: true })
+  const measureCard = h(
+    'section',
+    { class: 'practice-card', hidden: true },
+    h(
+      'div',
+      null,
+      h('span', { class: 'eyebrow' }, t('Your keyboard', 'Dein Keyboard')),
+      h('strong', null, t('How many keys does it have?', 'Wie viele Tasten hat es?')),
+      h('p', { class: 'muted' }, t('Press its lowest and highest key once, and Pianova shows exactly your keys and fits every song to them.', 'Drück einmal die tiefste und die höchste Taste, dann zeigt Pianova genau deine Tasten und passt jedes Lied an sie an.')),
+    ),
+    h('button', { class: 'btn primary', onclick: () => app.goMeasure(() => app.goPath()) }, icon('target'), t('Measure', 'Ausmessen')),
+  )
   const renderStatus = (s: MidiStatus) => {
     const name = s.inputs.length === 1 ? s.inputs[0].name : t(`${s.inputs.length} MIDI devices`, `${s.inputs.length} MIDI-Geräte`)
     pill.textContent = s.inputs.length ? name : t('Computer keys', 'Computertasten')
@@ -24,6 +36,8 @@ export function pathView(app: App): View {
         : ''
     banner.textContent = problem
     banner.hidden = !problem
+    // A keyboard whose size its USB name does not give away: offer to measure it.
+    measureCard.hidden = !!problem || !app.keyboardUnknown
   }
   renderStatus(app.input.status)
   const off = app.input.onStatus(renderStatus)
@@ -87,6 +101,7 @@ export function pathView(app: App): View {
       'main',
       { class: 'path' },
       banner,
+      measureCard,
       h(
         'section',
         { class: 'hero' },

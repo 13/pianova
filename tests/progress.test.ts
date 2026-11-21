@@ -42,11 +42,11 @@ describe('ProgressStore', () => {
     p.addStats([stat(1)])
     const q = new ProgressStore(kv, ids)
     expect(q.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
-    expect(q.settings).toEqual({ latencyMs: 35, volume: 0.8, labels: false, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
+    expect(q.settings).toEqual({ latencyMs: 35, volume: 0.8, labels: false, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null })
     expect(q.stats()).toEqual([stat(1)])
   })
   it('starts with sensible default settings', () => {
-    expect(new ProgressStore(fakeKV(), ids).settings).toEqual({ latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
+    expect(new ProgressStore(fakeKV(), ids).settings).toEqual({ latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null })
   })
   it('starts fresh from garbage and keeps the old data as a backup', () => {
     for (const junk of ['{not json', '42', '{"version":"x","lessons":"x"}']) {
@@ -66,7 +66,7 @@ describe('ProgressStore', () => {
   it('resets a version 1 timing offset, which also covered output delay, and keeps the rest', () => {
     const old = { version: 1, lessons: { a: { stars: 2, best: 0.9 } }, settings: { latencyMs: 60, volume: 0.5, labels: false, midiInputId: 'x' } }
     const p = new ProgressStore(fakeKV({ [STORAGE_KEY]: JSON.stringify(old) }), ids)
-    expect(p.settings).toEqual({ latencyMs: 0, volume: 0.5, labels: false, midiInputId: 'x', keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
+    expect(p.settings).toEqual({ latencyMs: 0, volume: 0.5, labels: false, midiInputId: 'x', keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null })
     expect(p.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
   })
   it('works in memory when storage is missing or refuses writes', () => {
@@ -163,7 +163,7 @@ describe('daily practice', () => {
       }),
     })
     const p = new ProgressStore(kv, ids)
-    expect(p.settings).toMatchObject({ dailyGoalMin: 1, volume: 0.8, view: 'highway', labels: false, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
+    expect(p.settings).toMatchObject({ dailyGoalMin: 1, volume: 0.8, view: 'highway', labels: false, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null })
     expect(p.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
     expect(p.lessonResult('b')).toBeUndefined()
     expect(p.song('s', 0)).toBeUndefined()
