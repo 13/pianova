@@ -233,7 +233,7 @@ export function settingsView(app: App): View {
         h(
           'p',
           { class: 'muted' },
-          t('Without a MIDI keyboard, the bottom letter rows play the lower octave (Z is C) and the top rows play the upper octave (Q is middle C). The [ and ] keys shift by an octave. Some computer keyboards cannot register certain three-key chords at once; a MIDI keyboard has no such limit.', 'Ohne MIDI-Keyboard spielen die unteren Buchstabenreihen die tiefere Oktave (Y bzw. Z ist C) und die oberen Reihen die höhere (Q ist das mittlere C). Die Tasten [ und ] verschieben um eine Oktave. Manche Computertastaturen erkennen bestimmte Dreiklänge nicht gleichzeitig; ein MIDI-Keyboard hat diese Grenze nicht.'),
+          t('You can click or tap the keys on screen too. Without a MIDI keyboard, the bottom letter rows play the lower octave (Z is C) and the top rows play the upper octave (Q is middle C). The [ and ] keys shift by an octave. Some computer keyboards cannot register certain three-key chords at once; a MIDI keyboard has no such limit.', 'Du kannst die Tasten auf dem Bildschirm auch anklicken oder antippen. Ohne MIDI-Keyboard spielen die unteren Buchstabenreihen die tiefere Oktave (Y bzw. Z ist C) und die oberen Reihen die höhere (Q ist das mittlere C). Die Tasten [ und ] verschieben um eine Oktave. Manche Computertastaturen erkennen bestimmte Dreiklänge nicht gleichzeitig; ein MIDI-Keyboard hat diese Grenze nicht.'),
         ),
       ),
     ),

@@ -65,6 +65,8 @@ export interface KeyAnchor {
 export interface HighwayRenderer {
   /** Where to draw a finger on a key (as of the last draw), or null if it is not shown. */
   keyAnchor?(pitch: number): KeyAnchor | null
+  /** The key under a point in CSS px from the canvas's top left (as of the last draw), if any. */
+  keyAt?(x: number, y: number): number | null
   setRange(chart: Chart | null): void
   setOptions(opts: HighwayOptions): void
   setHeld(held: Set<number>): void

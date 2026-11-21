@@ -2,6 +2,7 @@ import { noteIndex, noteSpan } from '../chart/window'
 import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, rgba, type Frame, type HighwayOptions, type HighwayRenderer, type KeyAnchor } from './common'
+import { BLACK_LENGTH, KEY_SPREAD, keyAt2D } from './hit2d'
 import { keyLabelsVersion, labelForPitch } from '../input/keyboard'
 import type { Grade } from '../judge/judge'
 import { noteLetter } from '../i18n'
@@ -10,10 +11,6 @@ import { noteLetter } from '../i18n'
 const DEPTH = 1.9
 /** Width of the far end of the highway relative to the keyboard. */
 const FAR_SCALE = 0.2
-/** How much wider the keyboard is at its front edge than at the hit line. */
-const KEY_SPREAD = 1.1
-/** Black keys reach this far down the white keys. */
-const BLACK_LENGTH = 0.6
 const SPARK_LIFE_MS = 650
 /** How far a spark's glow reaches past its dot, in px. */
 const SPARK_GLOW = 4
@@ -144,6 +141,12 @@ export class Highway2D implements HighwayRenderer {
     const { hitY, horizon } = this.layout
     const scale = FAR_SCALE + (1 - FAR_SCALE) * p
     return { x: this.w / 2 + (x - this.w / 2) * scale, y: horizon + (hitY - horizon) * p, scale }
+  }
+
+  keyAt(x: number, y: number): number | null {
+    if (this.w === 0) return null
+    const { layout, keys } = this.geometry
+    return keyAt2D(x, y, { w: this.w, hitY: layout.hitY, keyH: layout.keyH, whiteW: layout.whiteW, lo: this.lo, keys })
   }
 
   keyAnchor(pitch: number): KeyAnchor | null {

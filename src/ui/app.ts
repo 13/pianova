@@ -173,8 +173,9 @@ export class App {
       }
       this.synth.setVolume(this.progress.settings.volume)
       this.synth.setMix(this.progress.settings.mix)
-      this.input.onNote((pitch, on, _time, velocity) => {
-        if (on && !this.soundsKeys) return
+      this.input.onNote((pitch, on, _time, velocity, source) => {
+        // A click on the screen makes no sound of its own, whatever the keyboard does.
+        if (on && source !== 'pointer' && !this.soundsKeys) return
         if (on) this.synth.noteOn(pitch, velocity)
         else this.synth.noteOff(pitch)
       })

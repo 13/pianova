@@ -1,10 +1,11 @@
 import { KeyboardInput, type NoteCallback } from './keyboard'
 import { MidiInput, type MidiStatus } from './midi'
+import { PointerKeys, type KeyAt, type PointerTarget } from './pointer'
 
 export type { MidiStatus } from './midi'
 
-/** Where a note came from: a MIDI instrument or the computer keyboard. */
-export type NoteSource = 'midi' | 'keys'
+/** Where a note came from: a MIDI instrument, the computer keyboard, or a click on the keys drawn on screen. */
+export type NoteSource = 'midi' | 'keys' | 'pointer'
 export type HubNoteCallback = (pitch: number, on: boolean, perfTime: number, velocity: number, source: NoteSource) => void
 
 /** One place to hear every note the player presses, from MIDI or the computer keyboard. */
@@ -17,12 +18,13 @@ export class InputHub {
   private sustainListeners = new Set<(down: boolean) => void>()
   private midi: MidiInput
   private keyboard: KeyboardInput
+  private emitFrom: (source: NoteSource) => NoteCallback
 
   /** Which sources hold each held pitch: the same key can be down on MIDI and the computer keys. */
   private holders = new Map<number, Set<NoteSource>>()
 
   constructor() {
-    const emitFrom =
+    const emitFrom = (this.emitFrom =
       (source: NoteSource): NoteCallback =>
       (pitch, on, perfTime, velocity) => {
         let by = this.holders.get(pitch)
@@ -41,7 +43,7 @@ export class InputHub {
           this.held.delete(pitch)
         }
         for (const cb of [...this.noteListeners]) cb(pitch, on, perfTime, velocity, source)
-      }
+      })
     this.keyboard = new KeyboardInput(emitFrom('keys'))
     this.midi = new MidiInput(
       emitFrom('midi'),
@@ -71,6 +73,12 @@ export class InputHub {
   allowOctaveShift(allowed: boolean): void {
     this.keyboard.shiftEnabled = allowed
     if (!allowed) this.keyboard.octaveShift = 0
+  }
+
+  /** Lets the keys drawn in `el` be played by clicking or touching them. Returns a function that stops it. */
+  attachPointer(el: PointerTarget, keyAt: KeyAt): () => void {
+    const pointer = new PointerKeys(el, keyAt, this.emitFrom('pointer'))
+    return () => pointer.destroy()
   }
 
   /** Each returns a function that removes the listener. */

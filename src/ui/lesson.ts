@@ -196,6 +196,7 @@ export class LessonView implements View {
 /** Text beside a live keyboard, with keys lit up; optionally waits for a key press. */
 function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: () => void): View {
   const canvas = h('canvas', { class: 'stage-canvas' })
+  const stage = h('div', { class: 'stage' }, canvas)
   const target = step.pressToContinue ? nameToMidi(step.pressToContinue) : null
   let found = target === null
   const button = h('button', { class: 'btn primary', disabled: !found, onclick: next }, t('Continue', 'Weiter'))
@@ -204,7 +205,7 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
   const el = h(
     'div',
     { class: 'explain' },
-    h('div', { class: 'stage' }, canvas),
+    stage,
     h(
       'div',
       { class: 'card explain-card' },
@@ -216,6 +217,7 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
   )
 
   const highway = new Highway(canvas)
+  const offPointer = app.input.attachPointer(stage, (x, y) => highway.keyAt(x, y))
   highway.setRange(null)
   const highlight = new Map<number, Hand | 'hint'>((step.highlight ?? []).map((name) => [nameToMidi(name), 'hint']))
   const setOptions = () =>
@@ -252,6 +254,7 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
       cancelAnimationFrame(raf)
       offStatus()
       offNote()
+      offPointer()
       window.removeEventListener('keydown', onKey)
       highway.destroy()
     },

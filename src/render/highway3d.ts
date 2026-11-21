@@ -516,6 +516,7 @@ export class Highway3D implements HighwayRenderer {
         emissive: new THREE.Color(0, 0, 0),
       })
       const mesh = new THREE.Mesh(black ? this.blackGeo : this.whiteGeo, mat)
+      mesh.userData.pitch = p
       mesh.castShadow = black
       mesh.receiveShadow = !black
       const pivot = new THREE.Group()
@@ -884,6 +885,23 @@ export class Highway3D implements HighwayRenderer {
     const right = ((p.x + 1) / 2) * cw
     p.set(k.x, py, pz).project(cam)
     return { x: ((p.x + 1) / 2) * cw, y: ((1 - p.y) / 2) * ch, w: Math.abs(right - left) }
+  }
+
+  /**
+   * The key under a point in CSS pixels from the canvas's top-left corner, found by casting
+   * a ray from the camera of the last frame drawn. Black keys stand taller, so a ray meets
+   * them first where they rise above the white keys.
+   */
+  keyAt(x: number, y: number): number | null {
+    const cw = this.canvas.clientWidth
+    const ch = this.canvas.clientHeight
+    if (!this.drew || cw === 0 || ch === 0) return null
+    raycaster.setFromCamera(tmpV2.set((x / cw) * 2 - 1, 1 - (y / ch) * 2), this.camera)
+    for (const hit of raycaster.intersectObject(this.keyboard, true)) {
+      const pitch = hit.object.userData.pitch
+      if (typeof pitch === 'number') return pitch
+    }
+    return null
   }
 
   private updateNotes(frame: Frame, chart: Chart, now: number, sounding: Map<number, THREE.Color>): void {

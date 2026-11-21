@@ -180,6 +180,7 @@ export function jamView(app: App): View {
   window.addEventListener('keydown', onKey)
   document.addEventListener('visibilitychange', onHide)
 
+  let stage!: HTMLElement
   const el = h(
     'div',
     { class: 'screen lesson' },
@@ -197,7 +198,7 @@ export function jamView(app: App): View {
         'div',
         { class: 'play' },
         h('div', { class: 'play-head' }, h('h1', { class: 'play-title' }, t('Jam with the band', 'Mit der Band jammen')), scaleEl),
-        h(
+        (stage = h(
           'div',
           { class: 'stage' },
           canvas,
@@ -209,12 +210,13 @@ export function jamView(app: App): View {
             h('div', { class: 'panel-row' }, icon('target'), h('span', null, t('In key', 'Passend')), inKeyEl),
             h('div', { class: 'panel-row' }, icon('music'), h('span', null, t('Notes', 'Noten')), playedEl),
           ),
-        ),
+        )),
         h('div', { class: 'transport' }, playButton, h('span', { class: 'divider' }), keyEl, progEl, tempoEl),
       ),
     ),
   )
 
+  const offPointer = app.input.attachPointer(stage, (x, y) => highway.keyAt(x, y))
   app.input.allowOctaveShift(true)
   syncHints()
   restart()
@@ -228,6 +230,7 @@ export function jamView(app: App): View {
       session?.stop(synth.now())
       offNote()
       offStatus()
+      offPointer()
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('visibilitychange', onHide)
       app.input.allowOctaveShift(false)

@@ -240,6 +240,7 @@ export class PlayView implements View {
     this.syncHints()
 
     this.cleanups.push(
+      app.input.attachPointer(this.stageEl, (x, y) => this.highway.keyAt(x, y)),
       app.input.onNote((pitch, on, perfTime) => {
         if (on) this.session.press(pitch, app.synth.fromPerf(perfTime))
         else this.session.release(pitch, app.synth.fromPerf(perfTime))

@@ -100,6 +100,9 @@ export class Highway implements HighwayRenderer {
   keyAnchor(pitch: number): KeyAnchor | null {
     return this.impl?.keyAnchor?.(pitch) ?? null
   }
+  keyAt(x: number, y: number): number | null {
+    return this.impl?.keyAt?.(x, y) ?? null
+  }
   destroy(): void {
     this.destroyed = true
     this.impl?.destroy()
@@ -107,6 +110,11 @@ export class Highway implements HighwayRenderer {
 }
 
 let webgl: boolean | null = null
+
+/** Whether the keyboard is drawn in 3D (WebGL) rather than the flat 2D fallback. */
+export function drawsIn3D(): boolean {
+  return webglWorks()
+}
 
 /** Probed on a throwaway canvas, so a failure leaves the real one free for 2D. */
 function webglWorks(): boolean {
