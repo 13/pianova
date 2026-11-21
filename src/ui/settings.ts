@@ -2,7 +2,8 @@ import type { MidiStatus } from '../input/hub'
 import { detectKeyboard, KEYBOARDS } from '../input/instruments'
 import type { App } from './app'
 import { h, icon, type View } from './dom'
-import { LANGUAGES, noteName, resolveLang, setLang, t } from '../i18n'
+import { getLang, LANGUAGES, noteName, resolveLang, setLang, t } from '../i18n'
+import { drawsIn3D } from '../render/highway'
 
 const CLICKS = 12
 const LEAD_IN = 4
@@ -193,6 +194,34 @@ export function settingsView(app: App): View {
     [5, 10, 15, 20, 30, 45].map((m) => h('option', { value: String(m), selected: settings.dailyGoalMin === m }, t(`${m} minutes a day`, `${m} Minuten am Tag`))),
   )
 
+  // ---- about ----
+  const built = new Date(__BUILD_DATE__)
+  const facts: [string, string][] = [
+    [t('Version', 'Version'), __APP_VERSION__],
+    [t('Built', 'Erstellt'), isNaN(built.getTime()) ? __BUILD_DATE__ : new Intl.DateTimeFormat(getLang(), { dateStyle: 'medium', timeStyle: 'short' }).format(built)],
+    [t('Commit', 'Commit'), __COMMIT__],
+    [t('Graphics', 'Grafik'), drawsIn3D() ? '3D (WebGL)' : t('2D (no WebGL)', '2D (ohne WebGL)')],
+    [t('Sound', 'Ton'), `${(synth.ctx.sampleRate / 1000).toLocaleString(getLang())} kHz`],
+    [t('MIDI', 'MIDI'), input.status.supported ? t('Supported', 'Unterstützt') : t('Not supported in this browser', 'In diesem Browser nicht unterstützt')],
+    [t('Browser', 'Browser'), navigator.userAgent],
+  ]
+  const copyNote = h('span', { class: 'muted', role: 'status' })
+  const copy = h(
+    'button',
+    {
+      class: 'btn',
+      onclick: () => {
+        const text = ['Pianova', ...facts.map(([k, v]) => `${k}: ${v}`)].join('\n')
+        navigator.clipboard.writeText(text).then(
+          () => (copyNote.textContent = t('Copied.', 'Kopiert.')),
+          () => (copyNote.textContent = t('Could not copy here.', 'Kopieren geht hier nicht.')),
+        )
+      },
+    },
+    icon('copy'),
+    t('Copy details', 'Details kopieren'),
+  )
+
   const row = (title: string, ...content: (HTMLElement | string)[]) =>
     h('section', { class: 'setting' }, h('h2', null, title), h('div', { class: 'setting-body' }, content))
 
@@ -235,6 +264,12 @@ export function settingsView(app: App): View {
           { class: 'muted' },
           t('You can click or tap the keys on screen too. Without a MIDI keyboard, the bottom letter rows play the lower octave (Z is C) and the top rows play the upper octave (Q is middle C). The [ and ] keys shift by an octave. Some computer keyboards cannot register certain three-key chords at once; a MIDI keyboard has no such limit.', 'Du kannst die Tasten auf dem Bildschirm auch anklicken oder antippen. Ohne MIDI-Keyboard spielen die unteren Buchstabenreihen die tiefere Oktave (Y bzw. Z ist C) und die oberen Reihen die höhere (Q ist das mittlere C). Die Tasten [ und ] verschieben um eine Oktave. Manche Computertastaturen erkennen bestimmte Dreiklänge nicht gleichzeitig; ein MIDI-Keyboard hat diese Grenze nicht.'),
         ),
+      ),
+      row(
+        t('About', 'Über Pianova'),
+        h('p', { class: 'muted' }, t('Pianova teaches piano from your very first note, with a MIDI keyboard or right here on screen.', 'Pianova bringt dir Klavier bei, von der allerersten Note an, mit einem MIDI-Keyboard oder direkt hier am Bildschirm.')),
+        h('dl', { class: 'about' }, facts.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
+        h('div', { class: 'row' }, copy, copyNote, __REPO_URL__ && h('a', { class: 'btn ghost', href: __REPO_URL__, target: '_blank', rel: 'noopener noreferrer' }, t('Source code', 'Quellcode'))),
       ),
     ),
   )
