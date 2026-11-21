@@ -7,6 +7,7 @@ import { h, icon, percent, stars, type View } from './dom'
 import { midiPill } from './midiPill'
 import { PlayView, type PlayResult, type Practice } from './play'
 import { resultsCard } from './results'
+import { jamView } from './jam'
 import { songView } from './song'
 import { t, tr } from '../i18n'
 
@@ -67,6 +68,12 @@ export function freePlayView(app: App): View {
             ),
           )
         }),
+        h(
+          'button',
+          { class: 'piece import', onclick: () => app.show(jamView(app)) },
+          h('strong', null, t('Jam with the band', 'Mit der Band jammen')),
+          h('span', { class: 'muted' }, t('The band plays chords round and round; you play anything. The keys that fit light up.', 'Die Band spielt Akkorde im Kreis, du spielst, was du willst. Die passenden Tasten leuchten.')),
+        ),
         h(
           'button',
           { class: 'piece import', onclick: () => file.click() },

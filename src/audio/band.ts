@@ -1,4 +1,4 @@
-import { songHarmony } from '../chart/harmony'
+import { songHarmony, type ChordSpan } from '../chart/harmony'
 import type { BackingNote, Chart } from '../core/types'
 
 export type DrumSound = 'kick' | 'snare' | 'hat' | 'tom' | 'crash'
@@ -84,31 +84,48 @@ export function bandFor(chart: Chart, generated = true): BandEvent[] {
   const bass = !has((n) => n.voice === 'bass')
   // Piano notes left out at a level do not count: the band still plays under them.
   const pad = !has((n) => n.voice !== 'drums' && n.voice !== 'bass' && n.voice !== 'keys')
-  const bpb = chart.beatsPerBar
-  const end = chart.lengthBeats
+  if (drums) events.push(...grooveEvents(chart.beatsPerBar, chart.lengthBeats))
+  if (pad || bass) events.push(...harmonyEvents(songHarmony(chart), chart.beatsPerBar, { pad, bass }))
+  return events.sort((a, b) => a.beat - b.beat)
+}
+
+/**
+ * Drums in a groove for the metre, from the top to `end` beats. With `ringOut` the last
+ * bar is a single hit on its downbeat, to end a song; without it the groove simply runs
+ * on (for music that loops).
+ */
+export function grooveEvents(bpb: number, end: number, ringOut = true): BandEvent[] {
+  const events: BandEvent[] = []
   const bars = Math.ceil(end / bpb - EPS)
-  for (let bar = 0; drums && bar < bars; bar++) {
-    const last = bar === bars - 1
+  for (let bar = 0; bar < bars; bar++) {
+    const last = ringOut && bar === bars - 1
     for (const [at, sound, velocity] of groove(bpb)) {
       const beat = bar * bpb + at
-      // The last bar rings out on its downbeat.
       if (beat >= end - EPS || (last && at > 0)) continue
       events.push({ beat, sound, pitches: [], durationBeats: 0.25, velocity: last && sound === 'kick' ? 1 : velocity })
     }
   }
-  for (const span of pad || bass ? songHarmony(chart) : []) {
+  return events
+}
+
+/**
+ * A bass and a pad following the chords: the bass plays the root on each bar (or chord)
+ * start and the fifth on beat 3 of a long 4/4 stretch; the pad holds the triad in a close
+ * voicing around G3–G4.
+ */
+export function harmonyEvents(spans: ChordSpan[], bpb: number, parts = { pad: true, bass: true }): BandEvent[] {
+  const events: BandEvent[] = []
+  for (const span of spans) {
     let root = 36 + span.root
     if (root > 43) root -= 12
     const third = span.root + (span.minor ? 3 : 4)
-    // Pad: the triad in a close voicing around G3–G4.
     const chord = [span.root, third, span.root + 7].map((pc) => {
       let p = 55 + (((pc - 55) % 12) + 12) % 12
       if (p > 66) p -= 12
       return p
     })
-    if (pad) events.push({ beat: span.startBeat, sound: 'pad', pitches: chord.sort((a, b) => a - b), durationBeats: span.durationBeats, velocity: 0.6 })
-    if (!bass) continue
-    // Bass: root on each bar (or chord) start, the fifth on beat 3 of a long 4/4 stretch.
+    if (parts.pad) events.push({ beat: span.startBeat, sound: 'pad', pitches: chord.sort((a, b) => a - b), durationBeats: span.durationBeats, velocity: 0.6 })
+    if (!parts.bass) continue
     for (let beat = span.startBeat; beat < span.startBeat + span.durationBeats - EPS; ) {
       const barEnd = (Math.floor(beat / bpb + EPS) + 1) * bpb
       const stop = Math.min(barEnd, span.startBeat + span.durationBeats)
@@ -122,5 +139,5 @@ export function bandFor(chart: Chart, generated = true): BandEvent[] {
       beat = stop
     }
   }
-  return events.sort((a, b) => a.beat - b.beat)
+  return events
 }
