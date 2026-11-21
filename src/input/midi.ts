@@ -92,6 +92,14 @@ export class MidiInput {
     } else if (command === 0xb0 && data[1] === 64) {
       state.pedal = data[2] >= 64
       this.onSustain(state.pedal)
+    } else if (command === 0xb0 && (data[1] === 120 || data[1] === 123)) {
+      // All sound off / all notes off (a keyboard's "panic"): no note-offs will follow.
+      for (const pitch of state.keys) this.emit(pitch, false, e.timeStamp, 0)
+      state.keys.clear()
+    } else if (command === 0xb0 && data[1] === 121 && state.pedal) {
+      // Reset all controllers lifts the pedal.
+      state.pedal = false
+      this.onSustain(false)
     }
   }
 }

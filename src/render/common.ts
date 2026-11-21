@@ -81,13 +81,32 @@ export function rgb(hex: string): [number, number, number] {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
 }
 
+/**
+ * Colour strings are built every frame for every note, from a handful of colours and
+ * amounts: remember them instead of rebuilding them. Bounded, in case a caller animates
+ * the amount continuously.
+ */
+const memo = new Map<string, string>()
+function remember(key: string, make: () => string): string {
+  let v = memo.get(key)
+  if (v === undefined) {
+    if (memo.size > 4096) memo.clear()
+    memo.set(key, (v = make()))
+  }
+  return v
+}
+
 export function rgba(hex: string, alpha: number): string {
-  const [r, g, b] = rgb(hex)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  return remember(`a${hex}${alpha}`, () => {
+    const [r, g, b] = rgb(hex)
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  })
 }
 
 /** Mixes a hex colour towards white: 0 leaves it alone, 1 gives white. */
 export function lighten(hex: string, amount: number): string {
-  const [r, g, b] = rgb(hex).map((c) => Math.round(c + (255 - c) * amount))
-  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`
+  return remember(`l${hex}${amount}`, () => {
+    const [r, g, b] = rgb(hex).map((c) => Math.round(c + (255 - c) * amount))
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`
+  })
 }

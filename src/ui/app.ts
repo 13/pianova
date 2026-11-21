@@ -138,10 +138,22 @@ export class App {
 
   private welcome(): View {
     let started = false
+    const error = h('p', { class: 'error', role: 'alert', hidden: true })
     const begin = async () => {
       if (started) return
       started = true
-      this.synth = new Synth()
+      try {
+        this.synth ??= new Synth()
+      } catch (err) {
+        // No Web Audio at all: say so, and let the button be tried again.
+        started = false
+        error.textContent = t(
+          `Sound could not be started in this browser (${err instanceof Error ? err.message : err}). Try an up-to-date Chrome, Edge, Firefox or Safari.`,
+          `Der Ton ließ sich in diesem Browser nicht starten (${err instanceof Error ? err.message : err}). Versuch es mit einem aktuellen Chrome, Edge, Firefox oder Safari.`,
+        )
+        error.hidden = false
+        return
+      }
       this.synth.setVolume(this.progress.settings.volume)
       this.synth.setMix(this.progress.settings.mix)
       this.input.onNote((pitch, on, _time, velocity) => {
@@ -150,7 +162,13 @@ export class App {
         else this.synth.noteOff(pitch)
       })
       this.input.onSustain((down) => this.synth.setSustain(down))
-      await this.synth.resume()
+      // A refused resume (autoplay rules) is not fatal: the next click or key press tries again.
+      await this.synth.resume().catch((err: unknown) => console.warn('Pianova: audio did not start yet', err))
+      if (!this.synth.running) {
+        const retry = () => void this.synth.resume().catch(() => {})
+        document.addEventListener('pointerdown', retry, { once: true })
+        document.addEventListener('keydown', retry, { once: true })
+      }
       void this.input.init(this.progress.settings.midiInputId)
       void loadKeyboardLayout()
       if (this.progress.skill === null) this.goSkillCheck()
@@ -164,6 +182,7 @@ export class App {
         h('h1', { class: 'wordmark big' }, 'Pianova'),
         h('p', { class: 'lede' }, t('Learn piano from your very first note.', 'Klavier lernen, vom allerersten Ton an.')),
         h('button', { class: 'btn primary large', onclick: begin, autofocus: true }, t('Start', 'Los geht’s')),
+        error,
         h('p', { class: 'muted' }, t('Plug in a MIDI keyboard, or play along on your computer keys.', 'Schließ ein MIDI-Keyboard an oder spiel auf deinen Computertasten mit.')),
       ),
     }

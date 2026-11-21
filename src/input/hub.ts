@@ -18,13 +18,28 @@ export class InputHub {
   private midi: MidiInput
   private keyboard: KeyboardInput
 
+  /** Which sources hold each held pitch: the same key can be down on MIDI and the computer keys. */
+  private holders = new Map<number, Set<NoteSource>>()
+
   constructor() {
     const emitFrom =
       (source: NoteSource): NoteCallback =>
       (pitch, on, perfTime, velocity) => {
-        if (on === this.held.has(pitch)) return // duplicate press or stray release
-        if (on) this.held.add(pitch)
-        else this.held.delete(pitch)
+        let by = this.holders.get(pitch)
+        if (on === !!by?.has(source)) return // duplicate press or stray release
+        if (on) {
+          if (!by) this.holders.set(pitch, (by = new Set()))
+          by.add(source)
+          // Already sounding from the other source: one key, one note.
+          if (by.size > 1) return
+          this.held.add(pitch)
+        } else {
+          by!.delete(source)
+          // Still held on the other source: the note goes on.
+          if (by!.size > 0) return
+          this.holders.delete(pitch)
+          this.held.delete(pitch)
+        }
         for (const cb of [...this.noteListeners]) cb(pitch, on, perfTime, velocity, source)
       }
     this.keyboard = new KeyboardInput(emitFrom('keys'))

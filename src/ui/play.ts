@@ -1,4 +1,5 @@
 import { placeNotes, sectionAt, songSections, type Section } from '../chart/sections'
+import { noteIndex, noteSpan } from '../chart/window'
 import type { Chart, Hand } from '../core/types'
 import type { Grade, Summary } from '../judge/judge'
 import type { StatEvent } from '../progress/store'
@@ -108,7 +109,14 @@ export class PlayView implements View {
   /** Lowest and highest pitch in the chart, so every part's note map shares one scale. */
   private pitchSpan = { lo: 60, hi: 72 }
   private notesDirty = true
-  private stripWidth = 0
+  /** Each timeline segment's left edge and width, measured on resize (never in the frame loop). */
+  private segBox: { left: number; width: number }[] = []
+  // Reused every frame, so the loop does not allocate.
+  private span = { lo: 0, hi: 0 }
+  private highlight = new Map<number, Hand>()
+  private heldNow = new Set<number>()
+  private autoHands = new Map<number, Hand>()
+  private allHands = new Map<number, Hand>()
   private currentSection = -1
   private handGuide: HandGuide
   /** Shows a loop set from the section timeline on the transport bar's loop controls. */
@@ -241,9 +249,13 @@ export class PlayView implements View {
     }
     window.addEventListener('keydown', onKey)
     document.addEventListener('visibilitychange', onHide)
+    // The timeline is sized by CSS: measure it when that changes, not in every frame.
+    const resize = new ResizeObserver(() => this.measureTimeline())
+    resize.observe(this.panelsEl)
     this.cleanups.push(
       () => window.removeEventListener('keydown', onKey),
       () => document.removeEventListener('visibilitychange', onHide),
+      () => resize.disconnect(),
     )
 
     this.restart()
@@ -398,9 +410,16 @@ export class PlayView implements View {
   private xAt(beat: number): number {
     const i = sectionAt(this.sections, beat)
     const s = this.sections[i]
-    const el = this.segs[i].el
+    const box = this.segBox[i]
+    if (!box) return 0
     const frac = Math.max(0, Math.min(1, (beat - s.startBeat) / (s.endBeat - s.startBeat)))
-    return el.offsetLeft + frac * el.offsetWidth
+    return box.left + frac * box.width
+  }
+
+  /** Measures the timeline once its size changes, so the frame loop only writes to the page. */
+  private measureTimeline(): void {
+    this.segBox = this.segs.map(({ el }) => ({ left: el.offsetLeft, width: el.offsetWidth }))
+    this.notesDirty = true
   }
 
   /** Redraws each part's note map: dots by pitch and time, coloured once they are played. */
@@ -673,31 +692,48 @@ export class PlayView implements View {
     if (this.practiced >= 10) this.flushPractice()
 
     // Mark the keys to press: what a waiting session is holding for, or what is about to land.
-    const highlight = new Map<number, Hand>()
+    // Only notes near the playhead can matter, so only those are looked at.
+    const highlight = this.highlight
+    highlight.clear()
+    const { order } = noteIndex(chart)
+    const { lo, hi } = noteSpan(chart, session.beat - 0.5, session.beat + 0.5, this.span)
     if (session.mode === 'wait') {
       for (const i of session.pendingNotes()) {
         if (chart.notes[i].startBeat - session.beat < 0.5) highlight.set(chart.notes[i].pitch, chart.notes[i].hand)
       }
     } else if (session.mode === 'timed') {
-      chart.notes.forEach((n, i) => {
+      for (let k = lo; k < hi; k++) {
+        const i = order[k]
+        const n = chart.notes[i]
         const ahead = n.startBeat - session.beat
         if (session.active[i] && session.noteState[i] === 'pending' && ahead > -0.2 && ahead < 0.5) highlight.set(n.pitch, n.hand)
-      })
+      }
     }
     // Keys the app is playing light up while their notes sound (worked out from the music,
     // since the sounds themselves are scheduled ahead of time).
-    const held = new Set(this.app.input.held)
-    const autoHands = new Map<number, Hand>()
+    const held = this.heldNow
+    held.clear()
+    for (const pitch of this.app.input.held) held.add(pitch)
+    const autoHands = this.autoHands
+    autoHands.clear()
     if (session.state === 'running') {
-      chart.notes.forEach((n, i) => {
+      for (let k = lo; k < hi; k++) {
+        const i = order[k]
+        const n = chart.notes[i]
         if (!session.active[i] && n.startBeat <= session.beat && session.beat < n.startBeat + n.durationBeats * 0.95) {
           held.add(n.pitch)
           autoHands.set(n.pitch, n.hand)
         }
-      })
+      }
     }
     for (const pitch of this.keyHands.keys()) if (!this.app.input.held.has(pitch)) this.keyHands.delete(pitch)
-    const keyHands = autoHands.size ? new Map([...autoHands, ...this.keyHands]) : this.keyHands
+    let keyHands = this.keyHands
+    if (autoHands.size) {
+      keyHands = this.allHands
+      keyHands.clear()
+      for (const [pitch, hand] of autoHands) keyHands.set(pitch, hand)
+      for (const [pitch, hand] of this.keyHands) keyHands.set(pitch, hand)
+    }
     this.highway.setHeld(held)
     // In a demo nothing is the player's, so draw every note at full strength.
     const active = session.mode === 'demo' ? undefined : session.active
@@ -742,12 +778,6 @@ export class PlayView implements View {
       })
       // A part just finished: show its score even if no note was judged on the way out.
       if (this.cfg.scored) this.scoreSections()
-      this.notesDirty = true
-    }
-    // The canvases are sized by CSS, so redraw when the strip changes width too.
-    const width = this.panelsEl.clientWidth
-    if (width !== this.stripWidth) {
-      this.stripWidth = width
       this.notesDirty = true
     }
     if (this.notesDirty) {

@@ -1,3 +1,4 @@
+import { noteIndex, noteSpan } from '../chart/window'
 import type { Chart, Hand } from '../core/types'
 import type { Grade } from '../judge/judge'
 import { COLORS } from '../render/common'
@@ -108,16 +109,23 @@ export class HandGuide {
     for (const hand of ['L', 'R'] as Hand[]) this.hands[hand].classList.toggle('off', !hands.includes(hand))
   }
 
+  private span = { lo: 0, hi: 0 }
+
   update(chart: Chart, beat: number, noteState?: ('pending' | Grade)[], active?: boolean[]): void {
     const states: Record<Hand, string[]> = { L: ['', '', '', '', ''], R: ['', '', '', '', ''] }
     const next: Record<Hand, number> = { L: Infinity, R: Infinity }
     const notes = chart.notes
     const pending = (i: number) => (noteState?.[i] ?? 'pending') === 'pending' && (active?.[i] ?? true)
-    for (let i = 0; i < notes.length; i++) {
+    // Only notes sounding now or starting within NEXT_BEATS can light a finger.
+    const { order } = noteIndex(chart)
+    const { lo, hi } = noteSpan(chart, beat - 0.3, beat + NEXT_BEATS, this.span)
+    for (let k = lo; k < hi; k++) {
+      const i = order[k]
       const n = notes[i]
       if (n.finger && pending(i) && n.startBeat - beat > -0.3) next[n.hand] = Math.min(next[n.hand], n.startBeat)
     }
-    for (let i = 0; i < notes.length; i++) {
+    for (let k = lo; k < hi; k++) {
+      const i = order[k]
       const n = notes[i]
       if (!n.finger) continue
       const ahead = n.startBeat - beat

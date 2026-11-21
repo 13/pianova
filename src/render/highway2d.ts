@@ -1,3 +1,4 @@
+import { noteIndex, noteSpan } from '../chart/window'
 import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
 import { COLORS, FONT, LOOKAHEAD, keyRange, lighten, rgba, type Frame, type HighwayOptions, type HighwayRenderer } from './common'
@@ -14,6 +15,8 @@ const KEY_SPREAD = 1.1
 /** Black keys reach this far down the white keys. */
 const BLACK_LENGTH = 0.6
 const SPARK_LIFE_MS = 650
+/** How far a spark's glow reaches past its dot, in px. */
+const SPARK_GLOW = 4
 const MAX_SPARKS = 400
 
 interface Spark {
@@ -36,12 +39,22 @@ export class Highway2D implements HighwayRenderer {
   private hintShift = 0
   private held = new Set<number>()
   private sparks: Spark[] = []
+  private span = { lo: 0, hi: 0 }
   private lastSustainSpark = 0
   private w = 0
   private h = 0
   private dpr = 1
   private cache: { key: string; white: HTMLCanvasElement; black: HTMLCanvasElement } | null = null
   private observer: ResizeObserver
+  /** Layout, key positions and lane gradients: they only change with size or key range. */
+  private geo: {
+    layout: { whiteW: number; keyH: number; hitY: number; horizon: number }
+    keys: { x: number; width: number }[]
+    haze: CanvasGradient | null
+    lanes: { far: { x: number; y: number }; near: { x: number; y: number }; style: CanvasGradient }[] | null
+  } | null = null
+  /** A soft glowing dot per colour, drawn once, so sparks need no per-particle blur. */
+  private sparkSprites = new Map<string, HTMLCanvasElement>()
 
   constructor(private canvas: HTMLCanvasElement) {
     this.g = canvas.getContext('2d')!
@@ -58,6 +71,7 @@ export class Highway2D implements HighwayRenderer {
     const { lo, hi } = keyRange(chart)
     this.lo = lo
     this.hi = hi
+    this.geo = null
   }
 
   setOptions(opts: HighwayOptions): void {
@@ -84,20 +98,35 @@ export class Highway2D implements HighwayRenderer {
     this.canvas.width = Math.max(1, Math.round(this.w * dpr))
     this.canvas.height = Math.max(1, Math.round(this.h * dpr))
     this.g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    this.geo = null
   }
 
   // ---- geometry -------------------------------------------------------------
 
-  private get layout() {
+  private get geometry() {
+    if (this.geo) return this.geo
     let whites = 0
     for (let p = this.lo; p <= this.hi; p++) if (!isBlack(p)) whites++
     const whiteW = this.w / whites
     const keyH = Math.max(110, Math.min(this.h * 0.3, whiteW * 4.2))
-    return { whiteW, keyH, hitY: this.h - keyH, horizon: -this.h * 0.04 }
+    const keys: { x: number; width: number }[] = []
+    let before = 0
+    for (let p = this.lo; p <= this.hi; p++) {
+      keys.push(isBlack(p) ? { x: before * whiteW, width: whiteW * 0.56 } : { x: (before + 0.5) * whiteW, width: whiteW })
+      if (!isBlack(p)) before++
+    }
+    return (this.geo = { layout: { whiteW, keyH, hitY: this.h - keyH, horizon: -this.h * 0.04 }, keys, haze: null, lanes: null })
+  }
+
+  private get layout() {
+    return this.geometry.layout
   }
 
   /** Centre x and width of a key where it meets the hit line. */
   private key(pitch: number): { x: number; width: number } {
+    const k = this.geometry.keys[pitch - this.lo]
+    if (k) return k
+    // Off the range (a note the chart did not announce): carry on at white-key spacing.
     const { whiteW } = this.layout
     let whites = 0
     for (let p = this.lo; p < pitch; p++) if (!isBlack(p)) whites++
@@ -139,25 +168,34 @@ export class Highway2D implements HighwayRenderer {
     const g = this.g
     const { hitY } = this.layout
 
+    const geo = this.geometry
     // A soft glow rising from the keyboard into the dark.
-    const haze = g.createLinearGradient(0, hitY - this.h * 0.45, 0, hitY)
-    haze.addColorStop(0, 'rgba(60, 80, 190, 0)')
-    haze.addColorStop(1, 'rgba(60, 80, 190, 0.16)')
-    g.fillStyle = haze
+    if (!geo.haze) {
+      geo.haze = g.createLinearGradient(0, hitY - this.h * 0.45, 0, hitY)
+      geo.haze.addColorStop(0, 'rgba(60, 80, 190, 0)')
+      geo.haze.addColorStop(1, 'rgba(60, 80, 190, 0.16)')
+    }
+    g.fillStyle = geo.haze
     g.fillRect(0, 0, this.w, hitY)
 
     // Thin guide lines at every C and F: the edges of the black-key groups.
+    if (!geo.lanes) {
+      geo.lanes = []
+      for (let p = this.lo; p <= this.hi; p++) {
+        if (p % 12 !== 0 && p % 12 !== 5) continue
+        const edge = this.key(p).x - this.key(p).width / 2
+        const far = this.project(edge, 0)
+        const near = this.project(edge, 1)
+        const style = g.createLinearGradient(0, far.y, 0, near.y)
+        style.addColorStop(0, 'rgba(150, 170, 255, 0)')
+        style.addColorStop(0.25, 'rgba(150, 170, 255, 0.1)')
+        style.addColorStop(1, p % 12 === 0 ? 'rgba(150, 170, 255, 0.26)' : 'rgba(150, 170, 255, 0.14)')
+        geo.lanes.push({ far, near, style })
+      }
+    }
     g.lineWidth = 1
-    for (let p = this.lo; p <= this.hi; p++) {
-      if (p % 12 !== 0 && p % 12 !== 5) continue
-      const edge = this.key(p).x - this.key(p).width / 2
-      const far = this.project(edge, 0)
-      const near = this.project(edge, 1)
-      const line = g.createLinearGradient(0, far.y, 0, near.y)
-      line.addColorStop(0, 'rgba(150, 170, 255, 0)')
-      line.addColorStop(0.25, 'rgba(150, 170, 255, 0.1)')
-      line.addColorStop(1, p % 12 === 0 ? 'rgba(150, 170, 255, 0.26)' : 'rgba(150, 170, 255, 0.14)')
-      g.strokeStyle = line
+    for (const { far, near, style } of geo.lanes) {
+      g.strokeStyle = style
       g.beginPath()
       g.moveTo(far.x, far.y)
       g.lineTo(near.x, near.y)
@@ -184,8 +222,11 @@ export class Highway2D implements HighwayRenderer {
     const g = this.g
     const now = performance.now()
     const spawnSustain = now - this.lastSustainSpark > 45
-    // Far notes first so nearer ones overlap them.
-    for (let i = chart.notes.length - 1; i >= 0; i--) {
+    // Far notes first so nearer ones overlap them; only notes on screen are looked at.
+    const { order } = noteIndex(chart)
+    const { lo, hi } = noteSpan(chart, frame.beat, frame.beat + LOOKAHEAD, this.span)
+    for (let at = hi - 1; at >= lo; at--) {
+      const i = order[at]
       const n = chart.notes[i]
       const ahead = n.startBeat - frame.beat
       const tail = ahead + n.durationBeats
@@ -501,22 +542,42 @@ export class Highway2D implements HighwayRenderer {
   private drawSparks(): void {
     const g = this.g
     const now = performance.now()
-    this.sparks = this.sparks.filter((s) => now - s.born < SPARK_LIFE_MS)
+    // Drop burnt-out sparks in place (sparks are in birth order, so they are at the front).
+    let dead = 0
+    while (dead < this.sparks.length && now - this.sparks[dead].born >= SPARK_LIFE_MS) dead++
+    if (dead) this.sparks.splice(0, dead)
     g.globalCompositeOperation = 'lighter'
     for (const s of this.sparks) {
       const age = (now - s.born) / 1000
       const life = 1 - (now - s.born) / SPARK_LIFE_MS
       g.globalAlpha = life * life
-      g.fillStyle = s.color
-      g.shadowColor = s.color
-      g.shadowBlur = 8
-      g.beginPath()
       // Rise fast, then slow, like embers.
-      g.arc(s.x + s.vx * age, s.y + s.vy * age * (1 - age * 0.6), s.size, 0, Math.PI * 2)
-      g.fill()
+      const x = s.x + s.vx * age
+      const y = s.y + s.vy * age * (1 - age * 0.6)
+      const r = s.size + SPARK_GLOW
+      g.drawImage(this.sparkSprite(s.color), x - r, y - r, r * 2, r * 2)
     }
-    g.shadowBlur = 0
     g.globalAlpha = 1
     g.globalCompositeOperation = 'source-over'
+  }
+
+  /** A dot with its glow baked in (what shadowBlur 8 gave each spark), drawn once per colour. */
+  private sparkSprite(color: string): HTMLCanvasElement {
+    let sprite = this.sparkSprites.get(color)
+    if (sprite) return sprite
+    const size = 64
+    sprite = document.createElement('canvas')
+    sprite.width = sprite.height = size
+    const g = sprite.getContext('2d')!
+    const c = size / 2
+    const glow = g.createRadialGradient(c, c, 0, c, c, c)
+    glow.addColorStop(0, color)
+    glow.addColorStop(0.3, color)
+    glow.addColorStop(0.45, rgba(color, 0.45))
+    glow.addColorStop(1, rgba(color, 0))
+    g.fillStyle = glow
+    g.fillRect(0, 0, size, size)
+    this.sparkSprites.set(color, sprite)
+    return sprite
   }
 }

@@ -1,4 +1,5 @@
 import { isBlack } from '../core/pitch'
+import { noteIndex, noteSpan } from '../chart/window'
 import type { Chart, Hand } from '../core/types'
 import { noteLetter } from '../i18n'
 import type { Grade } from '../judge/judge'
@@ -100,13 +101,17 @@ export class SheetView {
 
     // Notes, a chord at a time so it shares one stem.
     const groups = new Map<string, number[]>()
-    chart.notes.forEach((n, i) => {
-      if (n.startBeat + n.durationBeats < from || n.startBeat > to) return
+    const { order } = noteIndex(chart)
+    const { lo, hi } = noteSpan(chart, from, to)
+    for (let k = lo; k < hi; k++) {
+      const i = order[k]
+      const n = chart.notes[i]
+      if (n.startBeat + n.durationBeats < from || n.startBeat > to) continue
       const key = `${n.hand}@${Math.round(n.startBeat * 1e4)}`
       const list = groups.get(key)
       if (list) list.push(i)
       else groups.set(key, [i])
-    })
+    }
     const rx = sp * 0.62
     const ry = sp * 0.44
     for (const idx of groups.values()) {

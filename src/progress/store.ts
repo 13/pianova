@@ -96,10 +96,106 @@ export function dayKey(date: Date): string {
 
 const daysBefore = (date: Date, n: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() - n)
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+/** A finite number clamped into range, or the fallback. */
+const num = (v: unknown, lo: number, hi: number, fallback: number) => (isNum(v) ? clamp(v, lo, hi) : fallback)
+const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T): T => (options.includes(v as T) ? (v as T) : fallback)
+/** The streak never looks further back than practice is kept. */
+const MAX_STREAK_DAYS = 400
+
+/**
+ * Saved data is checked field by field: anything of the wrong type or out of range falls
+ * back to its default, so a damaged or hand-edited save can never stop the app starting.
+ */
+function readSettings(v: unknown): Settings {
+  const d = DEFAULT_SETTINGS
+  if (!isObject(v)) return { ...d, mix: { ...d.mix } }
+  const mix = isObject(v.mix) ? v.mix : {}
+  return {
+    latencyMs: num(v.latencyMs, -50, 300, d.latencyMs),
+    volume: num(v.volume, 0, 1, d.volume),
+    labels: typeof v.labels === 'boolean' ? v.labels : d.labels,
+    midiInputId: typeof v.midiInputId === 'string' ? v.midiInputId : null,
+    keyboard: typeof v.keyboard === 'string' ? v.keyboard : d.keyboard,
+    soundKeys: oneOf(v.soundKeys, ['auto', 'on', 'off'], d.soundKeys),
+    language: oneOf(v.language, ['auto', 'en', 'de'], d.language),
+    view: oneOf(v.view, ['highway', 'sheet', 'both'], d.view),
+    dailyGoalMin: Math.round(num(v.dailyGoalMin, 1, 600, d.dailyGoalMin)),
+    mix: { accomp: num(mix.accomp, 0, 1, d.mix.accomp), band: num(mix.band, 0, 1, d.mix.band), click: num(mix.click, 0, 1, d.mix.click) },
+  }
+}
+
+function readResults(v: unknown): Record<string, Result> {
+  const out: Record<string, Result> = {}
+  if (!isObject(v)) return out
+  for (const [id, r] of Object.entries(v)) {
+    if (isObject(r) && isNum(r.stars) && isNum(r.best)) out[id] = { stars: clamp(Math.round(r.stars), 0, 3), best: clamp(r.best, 0, 1) }
+  }
+  return out
+}
+
+function readSongs(v: unknown): Record<string, SongProgress> {
+  const out: Record<string, SongProgress> = {}
+  if (!isObject(v)) return out
+  for (const [id, p] of Object.entries(v)) {
+    if (!isObject(p) || !Array.isArray(p.levels) || !Array.isArray(p.shares)) continue
+    if (p.levels.length !== p.shares.length || !p.levels.every(isNum) || !p.shares.every(isNum)) continue
+    out[id] = { levels: p.levels as number[], shares: p.shares as number[], mastery: num(p.mastery, 0, 1, 0) }
+  }
+  return out
+}
+
+const GRADES: readonly Grade[] = ['perfect', 'good', 'miss']
+
+function readStats(v: unknown): StatEvent[] {
+  if (!Array.isArray(v)) return []
+  return v
+    .filter(
+      (e): e is StatEvent =>
+        isObject(e) && typeof e.id === 'string' && isNum(e.pitch) && (e.hand === 'L' || e.hand === 'R') && GRADES.includes(e.grade as Grade) && isNum(e.offsetMs) && isNum(e.at),
+    )
+    .slice(-MAX_STATS)
+}
+
+function readPractice(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (!isObject(v)) return out
+  for (const [day, secs] of Object.entries(v)) if (/^\d{4}-\d{2}-\d{2}$/.test(day) && isNum(secs) && secs > 0) out[day] = secs
+  return out
+}
+
+/** What another tab saved, folded into ours: the better result always wins, nothing is lost. */
+function mergeBlobs(mine: Blob, theirs: Blob): void {
+  for (const key of ['lessons', 'pieces'] as const) {
+    for (const [id, r] of Object.entries(theirs[key])) {
+      const m = mine[key][id]
+      mine[key][id] = m ? { stars: Math.max(m.stars, r.stars), best: Math.max(m.best, r.best) } : r
+    }
+  }
+  for (const [id, p] of Object.entries(theirs.songs)) {
+    const m = mine.songs[id]
+    if (!m) mine.songs[id] = p
+    else if (m.levels.length === p.levels.length)
+      mine.songs[id] = { levels: m.levels.map((l, i) => Math.max(l, p.levels[i])), shares: m.shares.map((s, i) => Math.max(s, p.shares[i])), mastery: Math.max(m.mastery, p.mastery) }
+    else if (p.mastery > m.mastery) mine.songs[id] = p
+  }
+  for (const [day, secs] of Object.entries(theirs.practice)) mine.practice[day] = Math.max(mine.practice[day] ?? 0, secs)
+  const key = (e: StatEvent) => `${e.at}|${e.id}|${e.pitch}|${e.grade}|${e.offsetMs}`
+  const seen = new Set(mine.stats.map(key))
+  const extra = theirs.stats.filter((e) => !seen.has(key(e)))
+  if (extra.length) mine.stats = mine.stats.concat(extra).sort((a, b) => a.at - b.at).slice(-MAX_STATS)
+  mine.skill ??= theirs.skill
+  mine.lastSong ??= theirs.lastSong
+}
 
 /** Everything Pianova remembers. Falls back to memory when storage is unusable. */
 export class ProgressStore {
   private blob: Blob
+  /** What storage held when we last read or wrote it; anything else is another tab's save. */
+  private lastRaw: string | null = null
+  /** Set when the save was made by a newer Pianova: it is left untouched, not overwritten. */
+  readonly readOnly: boolean = false
 
   constructor(
     private kv: KV | null,
@@ -203,7 +299,7 @@ export class ProgressStore {
     const met = (n: number) => (this.blob.practice[dayKey(daysBefore(today, n))] ?? 0) >= goal
     let n = met(0) ? 0 : 1
     let count = 0
-    while (met(n)) {
+    while (n <= MAX_STREAK_DAYS && met(n)) {
       count++
       n++
     }
@@ -232,37 +328,66 @@ export class ProgressStore {
     } catch {
       return fresh()
     }
+    this.lastRaw = raw
     if (raw === null) return fresh()
+    let data: unknown
     try {
-      const data: unknown = JSON.parse(raw)
-      if (!isObject(data) || (data.version !== VERSION && data.version !== 1)) throw new Error('unknown save format')
-      const blob = fresh()
-      if (isObject(data.lessons)) blob.lessons = data.lessons as Record<string, Result>
-      if (isObject(data.pieces)) blob.pieces = data.pieces as Record<string, Result>
-      if (isObject(data.settings)) blob.settings = { ...DEFAULT_SETTINGS, ...(data.settings as Partial<Settings>) }
-      if (Array.isArray(data.stats)) blob.stats = data.stats as StatEvent[]
-      if (isObject(data.songs)) blob.songs = data.songs as Record<string, SongProgress>
-      if (typeof data.skill === 'number') blob.skill = data.skill
-      if (isObject(data.practice)) blob.practice = data.practice as Record<string, number>
-      if (typeof data.lastSong === 'string') blob.lastSong = data.lastSong
-      if (data.version === 1) blob.settings.latencyMs = DEFAULT_SETTINGS.latencyMs
-      return blob
+      data = JSON.parse(raw)
     } catch {
-      // Unreadable save: keep it aside rather than silently destroying it.
-      try {
-        this.kv?.setItem(BACKUP_KEY, raw)
-      } catch {
-        /* nothing more we can do */
-      }
+      data = null
+    }
+    if (isObject(data) && isNum(data.version) && data.version > VERSION) {
+      // Saved by a newer Pianova (an old copy is running from cache): play along in memory
+      // and leave that save for the newer version to pick up again.
+      ;(this as { readOnly: boolean }).readOnly = true
       return fresh()
     }
+    const blob = parse(data)
+    if (blob) return blob
+    // Unreadable save: keep it aside rather than silently destroying it.
+    try {
+      this.kv?.setItem(BACKUP_KEY, raw)
+    } catch {
+      /* nothing more we can do */
+    }
+    return fresh()
   }
 
   private save(): void {
+    if (this.readOnly || !this.kv) return
     try {
-      this.kv?.setItem(STORAGE_KEY, JSON.stringify(this.blob))
+      // Another tab saved since we last looked: fold its progress in before writing ours.
+      const current = this.kv.getItem(STORAGE_KEY)
+      if (current !== null && current !== this.lastRaw) {
+        let theirs: Blob | null = null
+        try {
+          theirs = parse(JSON.parse(current))
+        } catch {
+          /* unreadable: ours replaces it */
+        }
+        if (theirs) mergeBlobs(this.blob, theirs)
+      }
+      const raw = JSON.stringify(this.blob)
+      this.kv.setItem(STORAGE_KEY, raw)
+      this.lastRaw = raw
     } catch {
       /* storage full or blocked: keep going in memory */
     }
   }
+}
+
+/** A save read back field by field, or null if it is not a Pianova save this version understands. */
+function parse(data: unknown): Blob | null {
+  if (!isObject(data) || (data.version !== VERSION && data.version !== 1)) return null
+  const blob = fresh()
+  blob.lessons = readResults(data.lessons)
+  blob.pieces = readResults(data.pieces)
+  blob.settings = readSettings(data.settings)
+  blob.stats = readStats(data.stats)
+  blob.songs = readSongs(data.songs)
+  if (isNum(data.skill)) blob.skill = clamp(Math.round(data.skill), 0, 4)
+  blob.practice = readPractice(data.practice)
+  if (typeof data.lastSong === 'string') blob.lastSong = data.lastSong
+  if (data.version === 1) blob.settings.latencyMs = DEFAULT_SETTINGS.latencyMs
+  return blob
 }

@@ -181,3 +181,32 @@ describe('Judge, accuracy so far', () => {
     expect(j.summary().soFar).toBe(0.5)
   })
 })
+
+describe('Judge with notes out of time order', () => {
+  const notes = [
+    { pitch: 64, time: 2, hand: 'R' as const },
+    { pitch: 60, time: 0, hand: 'R' as const },
+    { pitch: 62, time: 1, hand: 'R' as const },
+    { pitch: 67, time: 1, hand: 'R' as const },
+  ]
+  it('misses notes as their window passes, whatever their order in the list', () => {
+    const j = new Judge(notes, 'timed')
+    expect(j.advance(0.5)).toEqual([1])
+    expect(j.press(62, 1.01)).toMatchObject({ kind: 'hit', index: 2, grade: 'perfect' })
+    expect(j.advance(1.5)).toEqual([3])
+    expect(j.done()).toBe(false)
+    expect(j.press(64, 2.1)).toMatchObject({ kind: 'hit', index: 0, grade: 'good' })
+    expect(j.done()).toBe(true)
+  })
+  it('waits for the earliest chord first in pitch mode', () => {
+    const j = new Judge(notes, 'pitch')
+    expect(j.pendingGroup()).toEqual([1])
+    j.press(60, 0)
+    expect(j.pendingGroup()).toEqual([2, 3])
+    expect(j.press(64, 0)).toMatchObject({ kind: 'wrong' })
+    j.press(67, 0)
+    j.press(62, 0)
+    expect(j.pendingGroup()).toEqual([0])
+  })
+})
+

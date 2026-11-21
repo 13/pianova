@@ -1,3 +1,4 @@
+import { noteIndex, noteSpan } from './window'
 import type { Chart } from '../core/types'
 
 /** A chord the music implies over a stretch of beats. */
@@ -22,12 +23,17 @@ export function harmonize(chart: Chart): ChordSpan[] {
   const step = bpb % 2 === 0 ? bpb / 2 : bpb
   const end = Math.max(chart.lengthBeats, step)
   const spans: ChordSpan[] = []
+  const { order } = noteIndex(chart)
+  const span = { lo: 0, hi: 0 }
   let prev: { root: number; minor: boolean } | null = null
   for (let start = 0; start < end - EPS; start += step) {
     const stop = start + step
     const weight = new Array<number>(12).fill(0)
     let lowest = Infinity
-    for (const n of chart.notes) {
+    // Only notes near this stretch can overlap it.
+    const { lo, hi } = noteSpan(chart, start, stop, span)
+    for (let k = lo; k < hi; k++) {
+      const n = chart.notes[order[k]]
       const overlap = Math.min(stop, n.startBeat + n.durationBeats) - Math.max(start, n.startBeat)
       if (overlap <= EPS) continue
       // Notes struck in this stretch matter more than ones ringing on into it.

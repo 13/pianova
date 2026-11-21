@@ -1,5 +1,6 @@
 import { isBlack } from '../core/pitch'
 import type { Chart, Hand } from '../core/types'
+import { noteIndex, noteSpan, type Span } from '../chart/window'
 import type { Grade } from '../judge/judge'
 import { noteLetter, t } from '../i18n'
 
@@ -76,50 +77,74 @@ export function chordGroups(chart: Chart): ChordGroup[] {
   return groups.sort((a, b) => a.startBeat - b.startBeat || a.hand.localeCompare(b.hand))
 }
 
-/** Notes still sounding at `beat` or starting within `window` beats of it. */
-function upcoming(chart: Chart, beat: number, window: number, hand?: Hand): number[] {
-  const pitches: number[] = []
-  for (const n of chart.notes) {
-    if (hand && n.hand !== hand) continue
-    if (n.startBeat + n.durationBeats > beat && n.startBeat < beat + window) pitches.push(n.pitch)
-  }
-  return pitches
-}
-
 export interface Range {
   lo: number
   hi: number
 }
 
-const HAND_WHITES = 5
+const span: Span = { lo: 0, hi: 0 }
 
-/** Where each hand will be playing soon: its notes, widened to at least a five-finger reach. */
-export function handZones(chart: Chart, beat: number, window: number): Partial<Record<Hand, Range>> {
-  const zones: Partial<Record<Hand, Range>> = {}
-  for (const hand of ['L', 'R'] as Hand[]) {
-    const pitches = upcoming(chart, beat, window, hand)
-    if (!pitches.length) continue
-    let lo = Math.min(...pitches)
-    let hi = Math.max(...pitches)
-    const whites = () => {
-      let count = 0
-      for (let p = lo; p <= hi; p++) if (!isBlack(p)) count++
-      return count
+/**
+ * Lowest and highest pitch of the notes (of `hand`, if given) still sounding at `beat`
+ * or starting within `window` beats of it, written to `out`. False if there are none.
+ * Visits only the notes near `beat`, so it is cheap enough to run every frame.
+ */
+function upcoming(chart: Chart, beat: number, window: number, hand: Hand | undefined, out: Range): boolean {
+  const { order } = noteIndex(chart)
+  const notes = chart.notes
+  noteSpan(chart, beat, beat + window, span)
+  let lo = Infinity
+  let hi = -Infinity
+  for (let k = span.lo; k < span.hi; k++) {
+    const n = notes[order[k]]
+    if (hand && n.hand !== hand) continue
+    if (n.startBeat + n.durationBeats > beat && n.startBeat < beat + window) {
+      if (n.pitch < lo) lo = n.pitch
+      if (n.pitch > hi) hi = n.pitch
     }
+  }
+  if (lo === Infinity) return false
+  out.lo = lo
+  out.hi = hi
+  return true
+}
+
+const HAND_WHITES = 5
+const HANDS: Hand[] = ['L', 'R']
+
+function whitesIn(lo: number, hi: number): number {
+  let count = 0
+  for (let p = lo; p <= hi; p++) if (!isBlack(p)) count++
+  return count
+}
+
+/**
+ * Where each hand will be playing soon: its notes, widened to at least a five-finger reach.
+ * Pass `out` (as a frame loop does) to reuse its range objects instead of allocating.
+ */
+export function handZones(chart: Chart, beat: number, window: number, out: Partial<Record<Hand, Range>> = {}): Partial<Record<Hand, Range>> {
+  for (const hand of HANDS) {
+    const r = out[hand] ?? { lo: 0, hi: 0 }
+    if (!upcoming(chart, beat, window, hand, r)) {
+      delete out[hand]
+      continue
+    }
+    let { lo, hi } = r
     // Grow one white key at a time, below then above, until a hand fits.
-    for (let down = true; whites() < HAND_WHITES; down = !down) {
+    for (let down = true; whitesIn(lo, hi) < HAND_WHITES; down = !down) {
       if (down) do lo--; while (isBlack(lo))
       else do hi++; while (isBlack(hi))
     }
-    zones[hand] = { lo, hi }
+    r.lo = lo
+    r.hi = hi
+    out[hand] = r
   }
-  return zones
+  return out
 }
 
 /** The span of keys the music needs over the next `window` beats, or null if nothing is coming. */
-export function focusRange(chart: Chart, beat: number, window: number): Range | null {
-  const pitches = upcoming(chart, beat, window)
-  return pitches.length ? { lo: Math.min(...pitches), hi: Math.max(...pitches) } : null
+export function focusRange(chart: Chart, beat: number, window: number, out: Range = { lo: 0, hi: 0 }): Range | null {
+  return upcoming(chart, beat, window, undefined, out) ? out : null
 }
 
 /** The milestone (10, 25, 50, then every 50) just reached going from `prev` to `streak`, if any. */

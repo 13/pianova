@@ -49,7 +49,7 @@ describe('ProgressStore', () => {
     expect(new ProgressStore(fakeKV(), ids).settings).toEqual({ latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
   })
   it('starts fresh from garbage and keeps the old data as a backup', () => {
-    for (const junk of ['{not json', '42', '{"version":99,"lessons":"x"}']) {
+    for (const junk of ['{not json', '42', '{"version":"x","lessons":"x"}']) {
       const kv = fakeKV({ [STORAGE_KEY]: junk })
       const p = new ProgressStore(kv, ids)
       expect(p.isUnlocked('b')).toBe(false)
@@ -139,5 +139,60 @@ describe('daily practice', () => {
     const q = new ProgressStore(kv, ['a'])
     expect(q.practiceOn(day(5))).toBe(90)
     expect(q.lastSong).toBe('ode-to-joy')
+  })
+
+  it('leaves a save from a newer version alone instead of overwriting it', () => {
+    const newer = JSON.stringify({ version: 99, lessons: { a: { stars: 3, best: 1 } } })
+    const kv = fakeKV({ [STORAGE_KEY]: newer })
+    const p = new ProgressStore(kv, ids)
+    expect(p.readOnly).toBe(true)
+    p.recordLesson('b', 0.9, 2)
+    expect(kv.data[STORAGE_KEY]).toBe(newer)
+    expect(kv.data[BACKUP_KEY]).toBeUndefined()
+  })
+  it('falls back field by field on a save with wrong types instead of crashing', () => {
+    const kv = fakeKV({
+      [STORAGE_KEY]: JSON.stringify({
+        version: 2,
+        settings: { dailyGoalMin: 0, mix: null, volume: 'loud', view: 'cube', labels: false },
+        lessons: { a: { stars: 2, best: 0.9 }, b: 'x', c: { stars: 'many' } },
+        songs: { s: { mastery: 0.5 }, ok: { levels: [1, 2], shares: [0.5, 0.6], mastery: 0.4 } },
+        stats: [stat(1), { id: 'a' }, null],
+        practice: { '2026-01-01': 120, nonsense: 5, '2026-01-02': 'x' },
+        skill: 'expert',
+      }),
+    })
+    const p = new ProgressStore(kv, ids)
+    expect(p.settings).toMatchObject({ dailyGoalMin: 1, volume: 0.8, view: 'highway', labels: false, mix: { accomp: 0.8, band: 0.7, click: 0.8 } })
+    expect(p.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
+    expect(p.lessonResult('b')).toBeUndefined()
+    expect(p.song('s', 0)).toBeUndefined()
+    expect(p.song('ok', 2)).toEqual({ levels: [1, 2], shares: [0.5, 0.6], mastery: 0.4 })
+    expect(p.stats()).toEqual([stat(1)])
+    expect(p.practiceOn(new Date(2026, 0, 1))).toBe(120)
+    expect(p.skill).toBeNull()
+  })
+  it('never loops forever counting a streak', () => {
+    const kv = fakeKV()
+    const p = new ProgressStore(kv, ids)
+    // Even if every day of the past year was played, the count stops.
+    for (let d = 0; d < 500; d++) p.addPractice(3600, new Date(2026, 0, 1 + d))
+    expect(p.streak(new Date(2027, 4, 15))).toBeLessThanOrEqual(401)
+  })
+  it('keeps progress saved by another tab instead of overwriting it', () => {
+    const kv = fakeKV()
+    const tab1 = new ProgressStore(kv, ids)
+    const tab2 = new ProgressStore(kv, ids)
+    tab1.recordLesson('a', 0.9, 2)
+    tab1.addStats([stat(1)])
+    tab1.addPractice(60, new Date(2026, 5, 1))
+    tab2.recordLesson('b', 0.8, 1)
+    tab2.recordLesson('a', 0.7, 1)
+    tab2.addStats([stat(2)])
+    const fresh = new ProgressStore(kv, ids)
+    expect(fresh.lessonResult('a')).toEqual({ stars: 2, best: 0.9 })
+    expect(fresh.lessonResult('b')).toEqual({ stars: 1, best: 0.8 })
+    expect(fresh.stats()).toEqual([stat(1), stat(2)])
+    expect(fresh.practiceOn(new Date(2026, 5, 1))).toBe(60)
   })
 })

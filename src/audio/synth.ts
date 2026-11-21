@@ -102,8 +102,9 @@ export class Synth {
 
   /** Mixer levels, 0..1 each. */
   setMix(mix: { accomp?: number; band?: number; click?: number }): void {
-    for (const [name, level] of Object.entries(mix) as ['accomp' | 'band' | 'click', number | undefined][]) {
-      if (level !== undefined) this.buses[name].gain.setTargetAtTime(Math.max(0, Math.min(1, level)), this.ctx.currentTime, 0.02)
+    for (const name of ['accomp', 'band', 'click'] as const) {
+      const level = mix?.[name]
+      if (typeof level === 'number' && Number.isFinite(level)) this.buses[name].gain.setTargetAtTime(Math.max(0, Math.min(1, level)), this.ctx.currentTime, 0.02)
     }
   }
 
@@ -193,6 +194,8 @@ export class Synth {
     const { ctx } = this
     const t = Math.max(ctx.currentTime, at)
     const out = this.buses.band
+    // Long songs schedule thousands of band sounds: forget the ones long finished.
+    if (this.bandNodes.length > 512) this.bandNodes = this.bandNodes.filter((b) => b.at > ctx.currentTime - 8)
     const track = (node: AudioScheduledSourceNode) => this.bandNodes.push({ node, at: t })
     const env = (peak: number, attack: number, hold: number, release: number) => {
       const g = ctx.createGain()

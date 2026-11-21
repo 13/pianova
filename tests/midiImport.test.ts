@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chartFromMidiJson, describeTracks, type MidiJson } from '../src/chart/midiImport'
+import { chartFromMidiJson, describeTracks, MAX_NOTE_BEATS, MAX_NOTES, readMidiFile, type MidiJson } from '../src/chart/midiImport'
 
 const note = (midi: number, ticks: number, durationTicks = 480) => ({ midi, ticks, durationTicks })
 const file = (tracks: ReturnType<typeof note>[][], header: Partial<MidiJson['header']> = {}): MidiJson => ({
@@ -87,5 +87,28 @@ describe('chartFromMidiJson', () => {
   it('refuses a file with no playable notes', () => {
     expect(() => chartFromMidiJson(file([[], []]), 't')).toThrow('No notes found in this file')
     expect(() => chartFromMidiJson(file([[note(5, 0)]]), 't')).toThrow('No notes found in this file')
+  })
+})
+
+describe('import limits', () => {
+  it('cuts a note with no end (a missing note-off) short instead of making the song endless', () => {
+    const c = chartFromMidiJson(file([[note(60, 0, 0x0fffffff), note(64, 0)]]), 't')
+    expect(Math.max(...c.notes.map((n) => n.durationBeats))).toBe(MAX_NOTE_BEATS)
+    expect(c.lengthBeats).toBe(MAX_NOTE_BEATS)
+  })
+  it('refuses a song that runs on for thousands of bars', () => {
+    expect(() => chartFromMidiJson(file([[note(60, 0), note(62, 480 * 100_000)]]), 't')).toThrow('too long')
+  })
+  it('refuses a file with more notes than anyone could learn', () => {
+    const many = Array.from({ length: MAX_NOTES + 1 }, (_, i) => note(21 + (i % 88), i * 60, 60))
+    expect(() => chartFromMidiJson(file([many]), 't')).toThrow('too many notes')
+  })
+  it('skips notes with impossible positions', () => {
+    const c = chartFromMidiJson(file([[note(60, Number.NaN), note(62, -480), note(64, 0)]]), 't')
+    expect(c.notes.map((n) => n.pitch)).toEqual([64])
+  })
+  it('rejects an oversized file before reading it', async () => {
+    const big = { size: 50 * 1024 * 1024, name: 'huge.mid', arrayBuffer: () => { throw new Error('should not be read') } } as unknown as File
+    await expect(readMidiFile(big)).rejects.toThrow('too big')
   })
 })

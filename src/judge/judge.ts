@@ -58,6 +58,11 @@ export class Judge {
   private wrong = 0
   private streak = 0
   private bestStreak = 0
+  /** Note indexes in time order, and their times, so per-frame work only looks near now. */
+  private order: number[]
+  private times: Float64Array
+  /** Position in `order` of the first note not yet judged; everything before it is. */
+  private cursor = 0
 
   constructor(
     private notes: JudgeNote[],
@@ -65,6 +70,25 @@ export class Judge {
   ) {
     this.grades = notes.map(() => undefined)
     this.shorts = notes.map(() => false)
+    this.order = notes.map((_, i) => i).sort((a, b) => notes[a].time - notes[b].time || a - b)
+    this.times = Float64Array.from(this.order, (i) => notes[i].time)
+  }
+
+  /** Moves the cursor past notes already judged. */
+  private settle(): void {
+    while (this.cursor < this.order.length && this.grades[this.order[this.cursor]] !== undefined) this.cursor++
+  }
+
+  /** First position in time order whose time is >= `time`. */
+  private lowerBound(time: number): number {
+    let lo = this.cursor
+    let hi = this.times.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (this.times[mid] < time) lo = mid + 1
+      else hi = mid
+    }
+    return lo
   }
 
   press(pitch: number, time: number): PressResult {
@@ -74,7 +98,10 @@ export class Judge {
   private pressTimed(pitch: number, time: number): PressResult {
     let best = -1
     let bestOffset = Infinity
-    for (let i = 0; i < this.notes.length; i++) {
+    // Only notes within reach of the press can be hit.
+    const from = this.lowerBound(time - (GOOD_MS + 1) / 1000)
+    for (let k = from; k < this.order.length && this.times[k] <= time + (GOOD_MS + 1) / 1000; k++) {
+      const i = this.order[k]
       const note = this.notes[i]
       if (note.pitch !== pitch || this.grades[i] !== undefined) continue
       const offsetMs = Math.round((time - note.time) * 1e6) / 1e3
@@ -86,6 +113,7 @@ export class Judge {
     if (best < 0) return this.markWrong(pitch)
     const grade: Grade = Math.abs(bestOffset) <= PERFECT_MS ? 'perfect' : 'good'
     this.markHit(best, grade)
+    this.settle()
     this.holding.set(pitch, best)
     this.offsets.push(bestOffset)
     return { kind: 'hit', index: best, grade, offsetMs: bestOffset }
@@ -95,6 +123,7 @@ export class Judge {
     const index = this.pendingGroup().find((i) => this.notes[i].pitch === pitch)
     if (index === undefined) return this.markWrong(pitch)
     this.markHit(index, 'perfect')
+    this.settle()
     return { kind: 'hit', index, grade: 'perfect', offsetMs: 0 }
   }
 
@@ -128,31 +157,36 @@ export class Judge {
   advance(time: number): number[] {
     if (this.mode === 'pitch') return []
     const missed: number[] = []
-    for (let i = 0; i < this.notes.length; i++) {
-      if (this.grades[i] === undefined && time > this.notes[i].time + GOOD_MS / 1000) {
+    // Notes are visited in time order, so the first one still in reach ends the search.
+    for (let k = this.cursor; k < this.order.length && time > this.times[k] + GOOD_MS / 1000; k++) {
+      const i = this.order[k]
+      if (this.grades[i] === undefined) {
         this.grades[i] = 'miss'
         missed.push(i)
       }
     }
+    this.settle()
     if (missed.length) this.streak = 0
-    return missed
+    return missed.sort((a, b) => a - b)
   }
 
   /** Unjudged notes of the earliest unfinished start time (the chord to play next). */
   pendingGroup(): number[] {
-    const first = this.grades.findIndex((g) => g === undefined)
-    if (first < 0) return []
-    const time = this.notes[first].time
+    this.settle()
+    if (this.cursor >= this.order.length) return []
+    const time = this.times[this.cursor]
     const group: number[] = []
-    for (let i = first; i < this.notes.length; i++) {
-      if (Math.abs(this.notes[i].time - time) > GROUP_EPS) continue
+    for (let k = this.cursor; k < this.order.length && this.times[k] - time <= GROUP_EPS; k++) {
+      const i = this.order[k]
       if (this.grades[i] === undefined) group.push(i)
     }
+    if (group.length > 1) group.sort((a, b) => a - b)
     return group
   }
 
   done(): boolean {
-    return this.grades.every((g) => g !== undefined)
+    this.settle()
+    return this.cursor >= this.order.length
   }
 
   summary(): Summary {
