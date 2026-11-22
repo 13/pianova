@@ -34,18 +34,27 @@ const step = (pitch: number) => (Math.floor(pitch / 12) - 1) * 7 + STEP[((pitch 
  */
 export class SheetView {
   private ctx: CanvasRenderingContext2D
+  /** CSS size of the canvas, kept by a ResizeObserver: reading it every frame forces a layout. */
+  private w = 0
+  private h = 0
+  private observer: ResizeObserver
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('No 2D canvas')
     this.ctx = ctx
+    this.observer = new ResizeObserver((entries) => {
+      const box = entries[entries.length - 1].contentRect
+      this.w = box.width
+      this.h = box.height
+    })
+    this.observer.observe(canvas)
   }
 
   draw(f: SheetFrame): void {
     const { canvas, ctx: g } = this
     const dpr = Math.min(2, window.devicePixelRatio || 1)
-    const w = canvas.clientWidth
-    const hgt = canvas.clientHeight
+    const { w, h: hgt } = this
     if (!w || !hgt) return
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(hgt * dpr)) {
       canvas.width = Math.round(w * dpr)
@@ -264,6 +273,7 @@ export class SheetView {
   }
 
   destroy(): void {
+    this.observer.disconnect()
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)
   }
 }

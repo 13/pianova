@@ -243,6 +243,8 @@ export class Highway3D implements HighwayRenderer {
 
   private textures = new Map<string, THREE.CanvasTexture>()
   private last = performance.now()
+  /** When this highway was made: its first frames compile shaders and are slow for that alone. */
+  private born = performance.now()
   private time = 0
   private lostContext = false
 
@@ -470,8 +472,9 @@ export class Highway3D implements HighwayRenderer {
    * to be undone.
    */
   private adaptQuality(frameMs: number, now: number): void {
-    // Skip pauses (hidden tab, the screen being built) rather than read them as slowness.
-    if (frameMs > 1000) return
+    // Skip pauses (hidden tab, the screen being built) rather than read them as slowness,
+    // and the first frames, slowed by compiling shaders rather than by drawing.
+    if (frameMs > 1000 || now - this.born < WARMUP_MS) return
     this.frameMs += (frameMs - this.frameMs) * 0.05
     const since = now - this.dprChanged
     const bottom = qualityLadder().length - 1
@@ -1571,6 +1574,9 @@ const HAND_PALETTE: Record<Hand, Palette> = { L: palette(COLORS.L), R: palette(C
 function maxDpr(): number {
   return Math.min(2, window.devicePixelRatio || 1)
 }
+
+/** How long a new highway's frame times are ignored by the adaptive quality. */
+const WARMUP_MS = 1500
 
 /** The quality level the last highway settled on; the next one starts there. */
 let settledLevel = 0
