@@ -92,13 +92,15 @@ describe('keyboards', () => {
     expect(detectKeyboard(['Yamaha NP-32'])?.lo).toBe(m('E1'))
     expect(detectKeyboard(['NP32 MIDI 1'])?.hi).toBe(m('G7'))
     expect(detectKeyboard(['Some Controller'])).toBeNull()
+    // No model number in the name: the 76-key NP-32, unless the name says NP-12.
+    expect(detectKeyboard(['Piaggero MIDI 1'])?.id).toBe('np32')
+    expect(detectKeyboard(['Piaggero NP-12 MIDI 1'])?.id).toBe('np12')
     expect(chooseKeyboard('auto', ['Some Controller']).id).toBe('88')
     expect(chooseKeyboard('61', ['Yamaha NP-32']).id).toBe('61')
   })
   it('uses a measured keyboard when the device name does not say its size', () => {
-    // A Piaggero reports itself as just "Piaggero MIDI 1".
-    expect(chooseKeyboard('auto', ['Piaggero MIDI 1'])).toMatchObject({ id: '88', speakers: true })
-    const measured = chooseKeyboard('auto', ['Piaggero MIDI 1'], { lo: m('E1'), hi: m('G7') })
+    expect(chooseKeyboard('auto', ['Some Digital Piano'])).toMatchObject({ id: '88', speakers: true })
+    const measured = chooseKeyboard('auto', ['Some Digital Piano'], { lo: m('E1'), hi: m('G7') })
     expect(measured).toMatchObject({ id: 'measured', lo: m('E1'), hi: m('G7'), speakers: true })
     expect(chooseKeyboard('measured', ['Some Controller'], { lo: 36, hi: 96 })).toMatchObject({ id: 'measured', lo: 36, hi: 96, speakers: false })
     // A recognised model still wins in automatic mode; choosing "measured" wins over it.
