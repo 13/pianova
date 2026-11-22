@@ -1,3 +1,4 @@
+import { IdleGate } from './idle'
 import { nameToMidi } from '../core/pitch'
 import type { Hand } from '../core/types'
 import { LESSONS, UNITS, type Lesson, type Step } from '../curriculum'
@@ -226,16 +227,23 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
     highway.setOptions({ labels: app.progress.settings.labels, keyHints: app.usingComputerKeys, hintShift: app.input.octaveShift, keys: app.keyboard })
   setOptions()
 
+  // The page shows a still keyboard: redraw only while something on it moves.
+  const idle = new IdleGate(stage)
   let raf = 0
   const frame = () => {
     raf = requestAnimationFrame(frame)
+    if (!idle.awake(app.input.held)) return
     highway.setHeld(app.input.held)
     highway.draw({ beat: 0, highlight })
   }
   frame()
 
-  const offStatus = app.input.onStatus(setOptions)
+  const offStatus = app.input.onStatus(() => {
+    setOptions()
+    idle.wake()
+  })
   const offNote = app.input.onNote((pitch, on) => {
+    idle.wake()
     if (!on || found || pitch !== target) return
     found = true
     highway.flash(pitch, 'perfect')
@@ -254,6 +262,7 @@ function explainView(app: App, step: Extract<Step, { type: 'explain' }>, next: (
     el,
     destroy() {
       cancelAnimationFrame(raf)
+      idle.destroy()
       offStatus()
       offNote()
       offPointer()

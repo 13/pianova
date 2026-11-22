@@ -221,6 +221,8 @@ export class Highway3D implements HighwayRenderer {
   private shadowW = NaN
   /** Device pixel ratio in use, stepped down while frames run slow. */
   private dpr = 1
+  /** Step on the quality ladder (see `qualityLadder`): 0 is best, higher is cheaper. */
+  private level = 0
   private frameMs = 16
   private dprChanged = 0
   private dprUpWait = 4000
@@ -435,45 +437,57 @@ export class Highway3D implements HighwayRenderer {
     if (w === 0 || h === 0) return
     this.w = w
     this.h = h
-    // Keep a pixel ratio stepped down for speed; otherwise use the screen's (capped at 2).
-    this.dpr = this.dprChanged ? Math.min(this.dpr, maxDpr()) : maxDpr()
+    // Start where the last highway settled (a slow machine stays slow from screen to screen),
+    // and keep a level stepped down for speed.
+    if (!this.dprChanged) {
+      this.level = settledLevel
+      if (this.level > 0) this.dprChanged = performance.now()
+    }
+    this.level = Math.min(this.level, qualityLadder().length - 1)
     this.applySize()
     this.layout()
     this.shadowDirty = true
   }
 
-  /** Sizes the drawing buffer (and with it the bloom chain) for the current pixel ratio. */
+  /** Sizes the drawing buffer and the bloom chain for the current quality level. */
   private applySize(): void {
+    const step = qualityLadder()[this.level]
+    this.dpr = step.dpr
     this.renderer.setPixelRatio(this.dpr)
     this.renderer.setSize(this.w, this.h, false)
     this.composer.setPixelRatio(this.dpr)
     this.composer.setSize(this.w, this.h)
+    // The composer sizes bloom to the full buffer; a cheaper level runs it smaller, or not at all.
+    const { bloom } = this.gl
+    bloom.enabled = step.bloom > 0
+    if (step.bloom > 0 && step.bloom < 1) bloom.setSize(Math.round(this.w * this.dpr * step.bloom), Math.round(this.h * this.dpr * step.bloom))
   }
 
   /**
-   * Adaptive resolution: while the smoothed frame time stays over ~20 ms, step the pixel
-   * ratio down (not below 1); step it back up once frames are comfortably quick again,
-   * waiting longer each time a step up had to be undone.
+   * Adaptive quality: while the smoothed frame time stays over ~20 ms, step down the quality
+   * ladder (resolution first, then a smaller bloom, then less resolution, then no bloom); step
+   * back up once frames are comfortably quick again, waiting longer each time a step up had
+   * to be undone.
    */
-  private adaptDpr(frameMs: number, now: number): void {
+  private adaptQuality(frameMs: number, now: number): void {
     // Skip pauses (hidden tab, the screen being built) rather than read them as slowness.
     if (frameMs > 1000) return
     this.frameMs += (frameMs - this.frameMs) * 0.05
     const since = now - this.dprChanged
-    const top = maxDpr()
-    if (this.frameMs > 20 && this.dpr > 1 && since > 1500) {
+    const bottom = qualityLadder().length - 1
+    if (this.frameMs > 20 && this.level < bottom && since > 1500) {
       // Coming straight back down after a step up: wait longer before the next one.
       if (this.dprUp && since < this.dprUpWait * 1.5) this.dprUpWait = Math.min(60000, this.dprUpWait * 2)
       this.dprUp = false
-      this.setDpr(Math.max(1, this.dpr - 0.25), now)
-    } else if (this.frameMs < 17.5 && this.dpr < top && since > this.dprUpWait) {
+      this.setLevel(this.level + 1, now)
+    } else if (this.frameMs < 17.5 && this.level > 0 && since > this.dprUpWait) {
       this.dprUp = true
-      this.setDpr(Math.min(top, this.dpr + 0.25), now)
+      this.setLevel(this.level - 1, now)
     }
   }
 
-  private setDpr(dpr: number, now: number): void {
-    this.dpr = dpr
+  private setLevel(level: number, now: number): void {
+    this.level = settledLevel = level
     this.dprChanged = now
     this.frameMs = 16
     this.applySize()
@@ -855,7 +869,7 @@ export class Highway3D implements HighwayRenderer {
     }
     this.composer.render(dt)
     this.drew = true
-    this.adaptDpr(frameMs, now)
+    this.adaptQuality(frameMs, now)
   }
 
   /**
@@ -867,9 +881,10 @@ export class Highway3D implements HighwayRenderer {
    */
   keyAnchor(pitch: number): { x: number; y: number; w: number } | null {
     const k = this.keys.get(pitch)
-    const cw = this.canvas.clientWidth
-    const ch = this.canvas.clientHeight
-    if (!k || this.w === 0 || cw === 0 || ch === 0) return null
+    // The size kept by the ResizeObserver: reading clientWidth here would force a layout per call.
+    const cw = this.w
+    const ch = this.h
+    if (!k || cw === 0 || ch === 0) return null
     // A point on the key top, in its pivot's frame, tipped by the key's press.
     const y0 = k.black ? BLACK_RISE : 0
     const z0 = k.black ? BLACK_LEN * 0.45 : KEY_LEN * 0.6
@@ -893,8 +908,8 @@ export class Highway3D implements HighwayRenderer {
    * them first where they rise above the white keys.
    */
   keyAt(x: number, y: number): number | null {
-    const cw = this.canvas.clientWidth
-    const ch = this.canvas.clientHeight
+    const cw = this.w
+    const ch = this.h
     if (!this.drew || cw === 0 || ch === 0) return null
     raycaster.setFromCamera(tmpV2.set((x / cw) * 2 - 1, 1 - (y / ch) * 2), this.camera)
     for (const hit of raycaster.intersectObject(this.keyboard, true)) {
@@ -1555,6 +1570,22 @@ const HAND_PALETTE: Record<Hand, Palette> = { L: palette(COLORS.L), R: palette(C
 
 function maxDpr(): number {
   return Math.min(2, window.devicePixelRatio || 1)
+}
+
+/** The quality level the last highway settled on; the next one starts there. */
+let settledLevel = 0
+
+/**
+ * Rendering settings from best to cheapest: the screen's pixel ratio stepped down to 1,
+ * then bloom at half size, then below one pixel per CSS pixel (big low-density screens
+ * on integrated graphics need it), then no bloom at all. `bloom` is the bloom chain's
+ * size as a share of the drawing buffer, 0 for off.
+ */
+export function qualityLadder(top = maxDpr()): { dpr: number; bloom: number }[] {
+  const steps: { dpr: number; bloom: number }[] = []
+  for (let dpr = top; dpr > 1 + 1e-6; dpr -= 0.25) steps.push({ dpr, bloom: 1 })
+  steps.push({ dpr: 1, bloom: 1 }, { dpr: 1, bloom: 0.5 }, { dpr: 0.8, bloom: 0.5 }, { dpr: 0.8, bloom: 0 }, { dpr: 0.6, bloom: 0 })
+  return steps
 }
 
 /** Chord groups per chart, worked out once. */

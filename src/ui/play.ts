@@ -14,6 +14,7 @@ import type { App } from './app'
 import { h, icon, percent, type View } from './dom'
 import { HandGuide } from './handGuide'
 import { HandOverlay } from './handOverlay'
+import { IdleGate } from './idle'
 import { t } from '../i18n'
 
 /** What the practice tools are set to; carried from one run to the next. */
@@ -140,6 +141,9 @@ export class PlayView implements View {
   private currentSection = -1
   private handGuide: HandGuide
   private handOverlay = new HandOverlay()
+  /** Stops redrawing a paused or finished song once nothing on screen moves. */
+  private idle!: IdleGate
+  private lastState = ''
   /** The player's keys, for placing the hands. */
   private keyRange: { lo: number; hi: number }
   private anchor = (pitch: number) => this.highway.keyAnchor(pitch)
@@ -248,6 +252,8 @@ export class PlayView implements View {
     )
 
     this.highway = new Highway(canvas)
+    this.idle = new IdleGate(this.stageEl)
+    this.cleanups.push(() => this.idle.destroy())
     this.highway.setRange(chart)
     this.bare = { ...chart, notes: [] }
     this.applyView()
@@ -306,6 +312,7 @@ export class PlayView implements View {
     this.flushPractice()
     this.highway.destroy()
     this.sheet?.destroy()
+    this.handOverlay.destroy()
     this.session.stop(this.app.synth.now())
   }
 
@@ -316,6 +323,7 @@ export class PlayView implements View {
 
   /** (Re)starts the chart with the current practice settings. */
   restart(): void {
+    this.idle?.wake()
     clearTimeout(this.finishTimer)
     const { synth } = this.app
     this.session?.stop(synth.now())
@@ -658,6 +666,7 @@ export class PlayView implements View {
 
   /** Shows the highway, sheet music, or both, as chosen in the transport bar. */
   private applyView(): void {
+    this.idle?.wake()
     const view = this.app.progress.settings.view
     if (view !== 'highway' && !this.sheet) this.sheet = new SheetView(this.sheetCanvas)
     this.stageEl.classList.toggle('view-sheet', view === 'sheet')
@@ -694,6 +703,7 @@ export class PlayView implements View {
   }
 
   private setPaused(paused: boolean, reason = ''): void {
+    this.idle?.wake()
     const now = this.app.synth.now()
     if (paused && this.session.state === 'running') {
       this.session.pause(now)
@@ -716,6 +726,7 @@ export class PlayView implements View {
 
   /** Key hints show which computer key plays each note, when there is no MIDI keyboard. */
   private syncHints(): void {
+    this.idle?.wake()
     this.hintShift = this.app.input.octaveShift
     this.highway.setOptions({
       labels: this.app.progress.settings.labels,
@@ -733,6 +744,12 @@ export class PlayView implements View {
     const { synth } = this.app
     const now = synth.now()
     session.update(now, synth.lead)
+    // While the song runs everything moves; paused or finished, draw only until it settles.
+    if (session.state !== this.lastState) {
+      this.lastState = session.state
+      this.idle.wake()
+    }
+    const draw = session.state === 'running' || this.idle.awake(this.app.input.held)
 
     // Time spent playing (not listening, not paused) counts towards the daily goal.
     const tick = performance.now()
@@ -791,7 +808,7 @@ export class PlayView implements View {
     const sheetOnly = view === 'sheet'
     const chords = this.app.progress.settings.chordNames ? this.chords : undefined
     this.chordStrip.update(session.beat, !!chords)
-    if (view !== 'highway')
+    if (draw && view !== 'highway')
       this.sheet?.draw({
         beat: session.beat,
         chart,
@@ -801,27 +818,29 @@ export class PlayView implements View {
         chords,
         labels: this.app.progress.settings.labels,
       })
-    this.highway.draw({
-      beat: session.beat,
-      chart: sheetOnly ? this.bare : chart,
-      noteState: sheetOnly ? [] : session.noteState,
-      cut: sheetOnly ? [] : session.cut,
-      active: sheetOnly ? [] : active,
-      highlight,
-      keyHands,
-      streak: this.streak,
-      sections: this.sections.length > 1 ? this.sections : undefined,
-    })
-    this.handGuide.update(chart, session.beat, session.noteState, active)
-    this.handOverlay.update({
-      chart,
-      beat: session.beat,
-      noteState: session.noteState,
-      active,
-      keys: this.keyRange,
-      anchor: this.anchor,
-      visible: this.app.progress.settings.handOverlay && !sheetOnly,
-    })
+    if (draw) {
+      this.highway.draw({
+        beat: session.beat,
+        chart: sheetOnly ? this.bare : chart,
+        noteState: sheetOnly ? [] : session.noteState,
+        cut: sheetOnly ? [] : session.cut,
+        active: sheetOnly ? [] : active,
+        highlight,
+        keyHands,
+        streak: this.streak,
+        sections: this.sections.length > 1 ? this.sections : undefined,
+      })
+      this.handGuide.update(chart, session.beat, session.noteState, active)
+      this.handOverlay.update({
+        chart,
+        beat: session.beat,
+        noteState: session.noteState,
+        active,
+        keys: this.keyRange,
+        anchor: this.anchor,
+        visible: this.app.progress.settings.handOverlay && !sheetOnly,
+      })
+    }
 
     const resumeCount = session.resumeCount(now)
     const counting = (session.beat < 0 && session.state === 'running' && session.mode === 'timed') || resumeCount > 0

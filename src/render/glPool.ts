@@ -100,7 +100,7 @@ function create(canvas: HTMLCanvasElement): GL {
   renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.shadowMap.autoUpdate = false
 
-  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 })
+  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 2 })
   const composer = new EffectComposer(renderer, target)
   const renderPass = new RenderPass(emptyScene, new THREE.PerspectiveCamera())
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.45, 1.05)

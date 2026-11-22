@@ -1,3 +1,4 @@
+import { IdleGate } from './idle'
 import { chordAt } from '../chart/harmony'
 import type { Hand } from '../core/types'
 import { noteLetter, t, tr } from '../i18n'
@@ -78,6 +79,7 @@ export function jamView(app: App): View {
     session = null
     const chart = jamChart(prog, bpm)
     highway.setRange(chart)
+    idle?.wake()
     strip.set(chordNames())
     const scale = [...scaleOf(key, prog)].sort((a, b) => ((a - key + 12) % 12) - ((b - key + 12) % 12))
     scaleEl.textContent = t(
@@ -107,6 +109,7 @@ export function jamView(app: App): View {
 
   function setPlaying(on: boolean): void {
     playing = on
+    idle?.wake()
     playButton.replaceChildren(icon(on ? 'pause' : 'play'))
     playButton.setAttribute('aria-label', on ? t('Stop the band', 'Band anhalten') : t('Start the band', 'Band starten'))
     if (on) start()
@@ -123,13 +126,17 @@ export function jamView(app: App): View {
   const keyHands = new Map<number, Hand>()
   const held = new Set<number>()
   let hintShift = app.input.octaveShift
+  let idle: IdleGate | null = null
   const chords = () => jamChords(key, prog)
   const frame = () => {
     raf = requestAnimationFrame(frame)
     if (app.input.octaveShift !== hintShift) {
       hintShift = app.input.octaveShift
       syncHints()
+      idle?.wake()
     }
+    // With the band stopped the picture is still: redraw only while something moves.
+    if (!playing && idle && !idle.awake(app.input.held)) return
     const now = synth.now()
     session?.update(now, synth.lead)
     const beat = session?.beat ?? 0
@@ -155,6 +162,7 @@ export function jamView(app: App): View {
   }
 
   const offNote = app.input.onNote((pitch, on) => {
+    idle?.wake()
     if (!on) return
     const spans = chords()
     const chord = playing && session ? spans[chordAt(spans, session.beat)] : undefined
@@ -217,6 +225,7 @@ export function jamView(app: App): View {
   )
 
   const offPointer = app.input.attachPointer(stage, (x, y) => highway.keyAt(x, y))
+  idle = new IdleGate(stage)
   app.input.allowOctaveShift(true)
   syncHints()
   restart()
@@ -227,6 +236,7 @@ export function jamView(app: App): View {
     el,
     destroy() {
       cancelAnimationFrame(raf)
+      idle?.destroy()
       session?.stop(synth.now())
       offNote()
       offStatus()
