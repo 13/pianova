@@ -1,5 +1,5 @@
 import { Synth } from '../audio/synth'
-import { LESSONS, PIECES, type Lesson } from '../curriculum'
+import { LESSONS, PIECES, UNITS, type Lesson } from '../curriculum'
 import { dayNumber, warmupChart } from '../practice/warmup'
 import { songView } from './song'
 import { withFingering } from '../chart/fingering'
@@ -31,6 +31,7 @@ export class App {
     safeStorage(),
     LESSONS.map((l) => l.id),
     LESSONS.map((l) => l.unit),
+    UNITS.filter((u) => u.open).map((u) => u.n),
   )
   private current: View | null = null
   private nav: Navigator

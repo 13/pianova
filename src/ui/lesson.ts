@@ -99,6 +99,8 @@ export class LessonView implements View {
         practice: step.type === 'drill' ? practice : undefined,
         tools: step.type === 'drill',
         metronome: timedLesson,
+        // A backing band plays along in demos and timed runs (it sits out while the music waits).
+        band: true,
         scored: step.type === 'perform',
         label: `${t('Lesson', 'Lektion')} ${String(LESSONS.indexOf(this.lesson) + 1).padStart(2, '0')} • ${stepName(step.type)}${slow ? t(', slower', ', langsamer') : ''}`,
         onSkip: step.type === 'perform' ? undefined : next,

@@ -15,6 +15,10 @@ describe('ProgressStore', () => {
     p.recordLesson('a', 0.85, 1)
     expect(ids.map((id) => p.isUnlocked(id))).toEqual([true, true, false])
   })
+  it('opens every lesson of a practice unit from the start', () => {
+    const p = new ProgressStore(fakeKV(), ['a', 'b', 'p1', 'p2'], [2, 2, 9, 9], [9])
+    expect(['a', 'b', 'p1', 'p2'].map((id) => p.isUnlocked(id))).toEqual([true, false, true, true])
+  })
   it('does not unlock on a failed run', () => {
     const p = new ProgressStore(fakeKV(), ids)
     p.recordLesson('a', 0.5, 0)

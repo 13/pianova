@@ -15,8 +15,8 @@ export const unit1: Lesson[] = [
     say(
       both('How the highway works', 'So funktioniert die Notenbahn'),
       both(
-        'Notes slide down towards the keyboard. When a note reaches the bright line, press the key it lands on.\n\nIn these first lessons the notes wait for you, so there is no rush. Use the pointer finger of your right hand.',
-        'Die Noten gleiten auf die Tastatur zu. Wenn eine Note die helle Linie erreicht, drückst du die Taste, auf der sie landet.\n\nIn den ersten Lektionen warten die Noten auf dich, du hast also keine Eile. Spiel mit dem Zeigefinger der rechten Hand.',
+        'Notes slide down towards the keyboard. When a note reaches the bright line, press the key it lands on.\n\nIn these first lessons the notes wait for you, so there is no rush. Use the pointer finger of your right hand.\n\nWhen Pianova plays a piece to you first, a small band plays along. Turn it up or down with the mixer button on the play screen.',
+        'Die Noten gleiten auf die Tastatur zu. Wenn eine Note die helle Linie erreicht, drückst du die Taste, auf der sie landet.\n\nIn den ersten Lektionen warten die Noten auf dich, du hast also keine Eile. Spiel mit dem Zeigefinger der rechten Hand.\n\nWenn Pianova dir ein Stück zuerst vorspielt, spielt eine kleine Band mit. Mit dem Mixer-Knopf auf dem Spielbildschirm machst du sie lauter oder leiser.',
       ),
     ),
     say(

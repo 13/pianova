@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { bandFor, drumFor } from '../src/audio/band'
 import { arrangement } from '../src/chart/arrangements'
+import { primaryHarmony } from '../src/chart/harmony'
+import { compileChart } from '../src/chart/notation'
 import { arrange, MAX_LEVEL } from '../src/chart/difficulty'
 import { songSections } from '../src/chart/sections'
 import { warmupChart } from '../src/practice/warmup'
@@ -88,5 +90,20 @@ describe('warm-up', () => {
     expect(a.chart.lengthBeats).toBe(32)
     const right = a.chart.notes.filter((n) => n.hand === 'R' && n.startBeat < 16).map((n) => n.pitch)
     expect(right.slice(0, 8)).toEqual([60, 62, 64, 65, 67, 69, 71, 72])
+  })
+})
+
+describe('written-out chords', () => {
+  it('picks I, IV or V per bar, ends on I, and the band follows them', () => {
+    // C major scale up and down: C D E F | G A B C | B A G F | E D C.
+    const chart = compileChart({ id: 's', title: 's', bpm: 80, R: 'C4 D4 E4 F4 | G4 A4 B4 C5 | B4 A4 G4 F4 | E4 D4 C4:2' })
+    const chords = primaryHarmony(chart, 0)
+    expect(chords.map((c) => [c.startBeat, c.root])).toEqual([[0, 0], [4, 7], [12, 0]])
+    // G major: the same shape a fifth up.
+    const g = compileChart({ id: 'g', title: 'g', bpm: 80, R: 'G4 A4 B4 C5 | D5 E5 F#5 G5 | F#5 E5 D5 C5 | B4 A4 G4:2' })
+    expect(primaryHarmony(g, 7).map((c) => c.root)).toEqual([7, 2, 7])
+    const bass = bandFor({ ...chart, chords }).filter((e) => e.sound === 'bass')
+    expect(bass[0].pitches[0] % 12).toBe(0)
+    expect(bass.find((e) => e.beat === 4)!.pitches[0] % 12).toBe(7)
   })
 })

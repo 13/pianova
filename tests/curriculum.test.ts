@@ -8,10 +8,12 @@ const charts = (): { where: string; chart: Chart; unit: number }[] =>
   LESSONS.flatMap((l) => l.steps.flatMap((s) => (s.type === 'explain' ? [] : [{ where: `${l.id} ${tr(s.title)}`, chart: s.chart, unit: l.unit }])))
 
 describe('curriculum', () => {
-  it('has 8 units in path order with unique ids', () => {
-    expect(UNITS.map((u) => u.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+  it('has 8 course units and 5 practice units in path order with unique ids', () => {
+    expect(UNITS.map((u) => u.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+    expect(UNITS.filter((u) => u.open).map((u) => u.n)).toEqual([9, 10, 11, 12, 13])
+    const upTo = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
     // Unit 1 starts at lesson 2: the old first lesson was folded into "Finding C".
-    const lessons: Record<number, number[]> = { 1: [2, 3, 4], 7: [1, 2, 3, 4, 5, 6] }
+    const lessons: Record<number, number[]> = { 1: [2, 3, 4], 7: upTo(6), 9: upTo(18), 10: upTo(18), 11: upTo(7), 12: upTo(6), 13: upTo(6) }
     expect(LESSONS.map((l) => l.id)).toEqual(UNITS.flatMap((u) => (lessons[u.n] ?? [1, 2, 3, 4]).map((n) => `u${u.n}l${n}`)))
     expect(new Set(LESSONS.map((l) => l.id)).size).toBe(LESSONS.length)
     LESSONS.forEach((l) => expect(l.id.startsWith(`u${l.unit}l`)).toBe(true))
@@ -86,6 +88,37 @@ describe('curriculum', () => {
         if (s.type === 'explain') expect(missing(s.text), `${l.id} ${tr(s.title)}`).toBe(false)
       }
     }
+  })
+  it('writes out in-key chords for the band wherever the lesson is a single line', () => {
+    // Unit 6 and most of unit 8 are made of chords; the band follows what those spell.
+    const guessed = (l: { id: string; unit: number }) => l.unit === 6 || (l.unit === 8 && l.id !== 'u8l3')
+    for (const l of LESSONS.filter((l) => !guessed(l))) {
+      for (const s of l.steps)
+        if (s.type !== 'explain') {
+          const chords = s.chart.chords!
+          expect(chords.length, l.id).toBeGreaterThan(0)
+          expect(chords.reduce((sum, c) => sum + c.durationBeats, 0), l.id).toBe(s.chart.lengthBeats)
+        }
+    }
+  })
+  it('plays each scale in both directions with standard fingering', () => {
+    const run = (id: string) => {
+      const s = LESSONS.find((l) => l.id === id)!.steps.find((s) => s.type === 'perform')!
+      if (s.type !== 'perform') throw new Error('expected a scored run')
+      return s.chart.notes
+    }
+    // One octave, G major right hand: up 1 2 3 1 2 3 4 5 with F sharp, back down the same fingers.
+    const g = run('u9l4')
+    expect(g.slice(0, 15).map((n) => n.finger)).toEqual([1, 2, 3, 1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 2, 1])
+    expect(g.slice(0, 8).map((n) => n.pitch)).toEqual([55, 57, 59, 60, 62, 64, 66, 67])
+    // Two octaves, C major left hand: 5 4 3 2 1 3 2 1 4 3 2 1 3 2 1.
+    expect(run('u10l2').slice(0, 15).map((n) => n.finger)).toEqual([5, 4, 3, 2, 1, 3, 2, 1, 4, 3, 2, 1, 3, 2, 1])
+    // F major right hand keeps 4 on B flat.
+    expect(run('u9l16').slice(0, 8).map((n) => n.finger)).toEqual([1, 2, 3, 4, 1, 2, 3, 4])
+    // Hands together: an octave apart, all 32 beats.
+    const both = run('u9l3')
+    expect(both.filter((n) => n.hand === 'L').map((n) => n.pitch + 12)).toEqual(both.filter((n) => n.hand === 'R').map((n) => n.pitch))
+    expect(LESSONS.find((l) => l.id === 'u10l3')!.steps[1].type === 'demo' && (LESSONS.find((l) => l.id === 'u10l3')!.steps[1] as { chart: Chart }).chart.lengthBeats).toBe(32)
   })
   it('fingers scales with the thumb passing under', () => {
     const scale = LESSONS.find((l) => l.id === 'u7l3')!

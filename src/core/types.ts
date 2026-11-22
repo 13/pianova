@@ -25,6 +25,15 @@ export interface BackingNote {
   velocity: number
 }
 
+/** A chord the music implies over a stretch of beats. */
+export interface ChordSpan {
+  startBeat: number
+  durationBeats: number
+  /** Pitch class of the root, 0 = C. */
+  root: number
+  minor: boolean
+}
+
 export interface Chart {
   id: string
   title: string
@@ -34,4 +43,6 @@ export interface Chart {
   lengthBeats: number
   /** The rest of the song, played along with you: other instruments, or notes a level leaves out. */
   backing?: BackingNote[]
+  /** The chords the band plays under the music, when they are written out rather than guessed. */
+  chords?: ChordSpan[]
 }

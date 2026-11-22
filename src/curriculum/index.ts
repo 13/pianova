@@ -1,5 +1,5 @@
 import { both } from '../i18n'
-import { chart } from './build'
+import { banded, chart } from './build'
 import type { Lesson, Piece, Unit } from './types'
 import { unit1 } from './unit1'
 import { unit2 } from './unit2'
@@ -9,6 +9,8 @@ import { unit5 } from './unit5'
 import { C, F, G, JINGLE_L, JINGLE_R, TWINKLE_A, unit6 } from './unit6'
 import { unit7 } from './unit7'
 import { unit8 } from './unit8'
+import { unit11, unit12, unit13 } from './practice'
+import { unit10, unit9 } from './scales'
 
 export type { Lesson, Piece, Step, Unit } from './types'
 
@@ -25,10 +27,54 @@ export const UNITS: Unit[] = [
     title: both('Across the keyboard', 'Über die ganze Tastatur'),
     blurb: both('Broken chords, hand over hand, arpeggios and inversions.', 'Gebrochene Akkorde, Übergreifen, Arpeggien und Umkehrungen.'),
   },
+  // Practice units: open from the start, each with a backing band.
+  {
+    n: 9,
+    title: both('Scales: one octave', 'Tonleitern: eine Oktave'),
+    blurb: both('C, G, D, A, E and F major: right hand, left hand, then both.', 'C-, G-, D-, A-, E- und F-Dur: rechte Hand, linke Hand, dann beide.'),
+    open: true,
+  },
+  {
+    n: 10,
+    title: both('Scales: two octaves', 'Tonleitern: zwei Oktaven'),
+    blurb: both('The same six scales across two octaves.', 'Dieselben sechs Tonleitern über zwei Oktaven.'),
+    open: true,
+  },
+  {
+    n: 11,
+    title: both('Basics in C position', 'Grundlagen in der C-Lage'),
+    blurb: both('Right hand, left hand, both hands, and Ode to Joy to finish.', 'Rechte Hand, linke Hand, beide Hände und zum Schluss die Ode an die Freude.'),
+    open: true,
+  },
+  {
+    n: 12,
+    title: both('Melodies with two hands', 'Melodien mit zwei Händen'),
+    blurb: both('Each tune in the left hand, the right hand, then both.', 'Jede Melodie mit der linken Hand, der rechten, dann mit beiden.'),
+    open: true,
+  },
+  {
+    n: 13,
+    title: both('Harmonic intervals', 'Harmonische Intervalle'),
+    blurb: both('Two notes at once: left hand, right hand, then both.', 'Zwei Töne zugleich: linke Hand, rechte Hand, dann beide.'),
+    open: true,
+  },
 ]
 
+/**
+ * The band's chords for lessons that are single lines in one key: the key's I, IV and V,
+ * one per bar. Left to guess, the band would hear chords from outside the key in a plain
+ * five-finger tune. Chord lessons (unit 6, most of unit 8) keep the chords their notes spell.
+ */
+function inKey(lessons: Lesson[], tonic: (l: Lesson) => number = () => 0): Lesson[] {
+  return lessons.map((l) => ({ ...l, steps: l.steps.map((s) => (s.type === 'explain' ? s : { ...s, chart: banded(s.chart, tonic(l)) })) }))
+}
+
 /** All lessons in path order. */
-export const LESSONS: Lesson[] = [...unit1, ...unit2, ...unit3, ...unit4, ...unit5, ...unit6, ...unit7, ...unit8]
+export const LESSONS: Lesson[] = [
+  ...inKey([...unit1, ...unit2, ...unit3, ...unit4, ...unit5]),
+  ...unit6,
+  ...inKey(unit7, (l) => (l.id === 'u7l6' ? 7 : 0)),
+  ...unit8, ...unit9, ...unit10, ...unit11, ...unit12, ...unit13]
 
 const ODE_A = 'E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | E4 D4 D4:2'
 const ODE_A2 = 'E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4 C4 C4:2'

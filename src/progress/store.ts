@@ -215,6 +215,8 @@ export class ProgressStore {
     private lessonIds: string[],
     /** Each lesson's unit, in the same order, so the skill check can open whole units. */
     private lessonUnits: number[] = [],
+    /** Practice units whose lessons are all open from the start. */
+    private openUnits: number[] = [],
   ) {
     this.blob = this.load()
   }
@@ -228,10 +230,11 @@ export class ProgressStore {
     this.save()
   }
 
-  /** The first lesson is always open; each later one needs a star on the one before. */
+  /** The first lesson and practice units are always open; each other lesson needs a star on the one before. */
   isUnlocked(lessonId: string): boolean {
     const i = this.lessonIds.indexOf(lessonId)
     if (i <= 0) return i === 0
+    if (this.openUnits.includes(this.lessonUnits[i])) return true
     if ((this.lessonUnits[i] ?? Infinity) <= placement(this.blob.skill).openUnit) return true
     return (this.blob.lessons[this.lessonIds[i - 1]]?.stars ?? 0) >= 1
   }

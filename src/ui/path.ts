@@ -54,7 +54,7 @@ export function pathView(app: App): View {
       h(
         'div',
         { class: 'unit-head' },
-        h('span', { class: 'eyebrow' }, `${t('Unit', 'Einheit')} ${unit.n}`),
+        h('span', { class: 'eyebrow' }, unit.open ? `${t('Practice', 'Übung')} · ${t('always open', 'immer offen')}` : `${t('Unit', 'Einheit')} ${unit.n}`),
         h('h2', null, tr(unit.title)),
         h('p', { class: 'muted' }, tr(unit.blurb)),
         h('span', { class: 'unit-count' }, t(`${done} of ${lessons.length}`, `${done} von ${lessons.length}`)),

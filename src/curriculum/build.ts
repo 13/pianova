@@ -1,3 +1,4 @@
+import { primaryHarmony } from '../chart/harmony'
 import { compileChart } from '../chart/notation'
 import type { Chart, Hand } from '../core/types'
 import { both, type Text } from '../i18n'
@@ -44,8 +45,19 @@ export function play(c: Chart, judging: 'pitch' | 'timed', opts: { hands?: Hand[
 }
 
 export function lesson(id: string, title: Text, summary: Text, steps: Step[]): Lesson {
-  return { id, unit: Number(id[1]), title, summary, steps }
+  return { id, unit: Number(/^u(\d+)l/.exec(id)![1]), title, summary, steps }
+}
+
+/** Gives a chart written-out chords for the band: the key's I, IV and V, one per bar. */
+export function banded(c: Chart, tonic = 0): Chart {
+  return { ...c, chords: primaryHarmony(c, tonic) }
 }
 
 /** Timed lessons pass at 70%: landing every note merely "good" is a pass. */
 export const TIMED = { pass: 0.7 }
+
+/** The note that introduces the backing band, added to the first lesson of a practice unit. */
+export const BAND = {
+  en: '\n\nA band plays along in the demo and in the scored run. Turn it up or down with the mixer button on the play screen.',
+  de: '\n\nIn der Vorführung und im Wertungsdurchlauf spielt eine Band mit. Mit dem Mixer-Knopf auf dem Spielbildschirm machst du sie lauter oder leiser.',
+}

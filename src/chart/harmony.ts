@@ -1,15 +1,8 @@
 import { noteIndex, noteSpan } from './window'
-import type { Chart, Hand } from '../core/types'
+import type { Chart, ChordSpan, Hand } from '../core/types'
 import { noteLetter } from '../i18n'
 
-/** A chord the music implies over a stretch of beats. */
-export interface ChordSpan {
-  startBeat: number
-  durationBeats: number
-  /** Pitch class of the root, 0 = C. */
-  root: number
-  minor: boolean
-}
+export type { ChordSpan }
 
 const EPS = 1e-6
 
@@ -89,6 +82,7 @@ export function chordLabel(c: { root: number; minor: boolean }): string {
  * Drums are left out; a bass line counts as the left hand, where it weighs most.
  */
 export function songHarmony(chart: Chart): ChordSpan[] {
+  if (chart.chords) return chart.chords
   const extra = (chart.backing ?? [])
     .filter((n) => n.voice !== 'drums')
     .map((n) => ({ pitch: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats, hand: (n.voice === 'bass' || n.pitch < 60 ? 'L' : 'R') as Hand }))
@@ -111,4 +105,53 @@ export function chordAt(chords: { startBeat: number }[], beat: number): number {
     else hi = mid
   }
   return lo - 1
+}
+
+/**
+ * Plain chords for practice music: one per bar, chosen from the key's three main chords
+ * (I, IV, V, its seventh counting half) by how many of the bar's notes they hold, with a bonus when the bar starts on
+ * the chord's root. Ties go to I, then V, then IV, and to staying put; the last bar comes
+ * home to I. Simpler than `harmonize`, and always in the key, which suits scales and
+ * exercises better than a guess at every half bar.
+ */
+export function primaryHarmony(chart: Chart, tonic: number): ChordSpan[] {
+  const bpb = chart.beatsPerBar
+  const bars = Math.max(1, Math.ceil(chart.lengthBeats / bpb - EPS))
+  // I, V(7), IV: [root offset, chord tones as offsets from the tonic, weight of each].
+  const options: [number, Record<number, number>][] = [
+    [0, { 0: 1, 4: 1, 7: 1 }],
+    [7, { 7: 1, 11: 1, 2: 1, 5: 0.5 }],
+    [5, { 5: 1, 9: 1, 0: 1 }],
+  ]
+  const spans: ChordSpan[] = []
+  let prev = 0
+  for (let bar = 0; bar < bars; bar++) {
+    const start = bar * bpb
+    const stop = start + bpb
+    const inBar = chart.notes.filter((n) => n.startBeat >= start - EPS && n.startBeat < stop - EPS)
+    const first = inBar.length ? Math.min(...inBar.map((n) => n.startBeat)) : -1
+    let best = prev
+    if (bar === bars - 1) best = 0
+    else if (inBar.length) {
+      let bestScore = -Infinity
+      for (const [root, tones] of options) {
+        let score = root === prev ? 0.1 : 0
+        for (const n of inBar) {
+          const pc = (((n.pitch - tonic) % 12) + 12) % 12
+          score += (tones[pc] ?? 0) * Math.min(n.durationBeats, stop - n.startBeat)
+          if (n.startBeat === first && pc === root) score += 0.5
+        }
+        if (score > bestScore + EPS) {
+          bestScore = score
+          best = root
+        }
+      }
+    }
+    const root = (tonic + best) % 12
+    const last = spans[spans.length - 1]
+    if (last && last.root === root) last.durationBeats += bpb
+    else spans.push({ startBeat: start, durationBeats: bpb, root, minor: false })
+    prev = best
+  }
+  return spans
 }

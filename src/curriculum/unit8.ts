@@ -1,5 +1,5 @@
 import { both } from '../i18n'
-import { chart, lesson, play, say, TIMED } from './build'
+import { banded, chart, lesson, play, say, TIMED } from './build'
 import type { Lesson } from './types'
 
 const BROKEN = 'C4/1 E4/3 G4/5 E4/3 | C4/1 F4/3 A4/5 F4/3 | B3/1 D4/2 G4/5 D4/2 | C4/1 E4/3 G4/5 E4/3'
@@ -39,9 +39,11 @@ export const unit8: Lesson[] = [
       { highlight: ['C4', 'E4', 'G4', 'C5', 'E5', 'G5', 'C6'] },
     ),
     ...play(
-      chart('u8l3', 'Arpeggios', 69, {
-        R: 'C4/1 E4/2 G4/3 C5/1 | E5/2 G5/3 C6/5:2 | C6/5 G5/3 E5/2 C5/1 | G4/3 E4/2 C4/1:2 | C4/1 E4/2 G4/3 C5/1 | E5/2 G5/3 C6/5:2 | C6/5 G5/3 E5/2 C5/1 | G4/3 E4/2 C4/1:2',
-      }),
+      banded(
+        chart('u8l3', 'Arpeggios', 69, {
+          R: 'C4/1 E4/2 G4/3 C5/1 | E5/2 G5/3 C6/5:2 | C6/5 G5/3 E5/2 C5/1 | G4/3 E4/2 C4/1:2 | C4/1 E4/2 G4/3 C5/1 | E5/2 G5/3 C6/5:2 | C6/5 G5/3 E5/2 C5/1 | G4/3 E4/2 C4/1:2',
+        }),
+      ),
       'timed',
       TIMED,
     ),

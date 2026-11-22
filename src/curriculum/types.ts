@@ -23,6 +23,8 @@ export interface Unit {
   n: number
   title: Text
   blurb: Text
+  /** Practice units: every lesson is open from the start, in any order. */
+  open?: boolean
 }
 
 export interface Piece {
