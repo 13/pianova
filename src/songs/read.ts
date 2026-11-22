@@ -28,9 +28,44 @@ export const SONG_EXTENSIONS = [...GUITAR_PRO, ...MIDI]
 export function readSongFile(name: string, bytes: Uint8Array): SongFile {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
   const fallback = name.replace(/\.[^.]+$/, '')
-  if (MIDI.includes(ext)) return { title: fallback, artist: '', midi: slim(new Midi(bytes)) }
+  if (MIDI.includes(ext)) return { ...songName(fallback), midi: slim(new Midi(bytes)) }
   if (GUITAR_PRO.includes(ext)) return readGuitarPro(bytes, fallback)
   throw new Error(`not a song file: ${name}`)
+}
+
+/**
+ * The title and artist a MIDI file's name gives, which is all a MIDI file usually says:
+ * "Mad World By_ Gary Jules" (a "By:" that cannot be in a file name), "Gary Jules - Mad
+ * World". Download-site tags, dates and "midi" words are left out
+ * ("Gary-Jules-Mad-World-VisionMidis-20220731211542-nonstop2k.com" is "Gary Jules Mad World").
+ */
+export function songName(name: string): { title: string; artist: string } {
+  const by = name.match(/^(.+?)\s+by[_:]\s*(.+)$/i)
+  if (by) return { title: tidy(by[1]), artist: tidy(by[2]) }
+  const dash = name.match(/^(.+?)\s+-\s+(.+)$/)
+  if (dash) return { title: tidy(dash[2]), artist: tidy(dash[1]) }
+  return { title: tidy(name) || name, artist: '' }
+}
+
+/**
+ * A title that starts with an artist named by another song ("Gary Jules Mad World", with a
+ * Guitar Pro file by Gary Jules beside it) as that artist's song ("Mad World").
+ */
+export function knownArtist(song: { title: string; artist: string }, artists: readonly string[]): { title: string; artist: string } {
+  if (song.artist) return song
+  for (const artist of artists) {
+    if (!artist || song.title.length <= artist.length + 1) continue
+    if (song.title.toLowerCase().startsWith(artist.toLowerCase() + ' ')) return { title: song.title.slice(artist.length + 1), artist }
+  }
+  return song
+}
+
+function tidy(text: string): string {
+  return text
+    .replace(/\w+\.(com|net|org|info|de|ru|uk|fr|it|nl|es)\b/gi, ' ')
+    .split(/[\s_-]+/)
+    .filter((word) => word && !/^\d{6,}$/.test(word) && !/midi/i.test(word))
+    .join(' ')
 }
 
 /**

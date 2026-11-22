@@ -1,5 +1,6 @@
-import type { BackingNote, Chart, ChartNote, Hand, Voice } from '../core/types'
+import type { BackingNote, Chart, ChartNote, Voice } from '../core/types'
 import { t as tx } from '../i18n'
+import { splitHands } from './hands'
 
 /** The part of @tonejs/midi's parsed file that we read. */
 export interface MidiJson {
@@ -16,7 +17,7 @@ export interface MidiJson {
   }[]
 }
 
-/** What to do with one track: give it to a hand, split it at middle C, let it play along, or leave it out. */
+/** What to do with one track: give it to a hand, split it between the hands, let it play along, or leave it out. */
 export type TrackRole = 'R' | 'L' | 'split' | 'band' | 'off'
 
 export interface TrackInfo {
@@ -32,7 +33,6 @@ export interface TrackInfo {
 
 const PIANO_LOW = 21
 const PIANO_HIGH = 108
-const MIDDLE_C = 60
 const MIN_BEATS = 0.05
 /** MIDI channel 10 (9 counting from 0) is drums by convention. */
 const DRUM_CHANNEL = 9
@@ -51,7 +51,7 @@ export const MAX_NOTE_BEATS = 32
 
 /**
  * The tracks that have notes, each with a suggested role. Two tonal tracks are taken as
- * right hand then left hand; one is split at middle C; with more, the piano tracks are
+ * right hand then left hand; one is split between the hands; with more, the piano tracks are
  * split and the rest (strings, bass, …) play along, unless there are no piano tracks, in
  * which case everything is split. Drums always play along.
  */
@@ -127,6 +127,8 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
   const role = roles ?? Object.fromEntries(describeTracks(midi).map((t) => [t.index, t.role]))
   const seen = new Set<string>()
   const notes: ChartNote[] = []
+  /** Notes from tracks to be split between the hands; their hands are set once all are in. */
+  const toSplit: ChartNote[] = []
   const backing: BackingNote[] = []
   const lengthOf = (ticks: number) => {
     const beats = ticks / ppq
@@ -153,17 +155,22 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
       const key = `${n.midi}@${n.ticks}`
       if (seen.has(key)) continue
       seen.add(key)
-      const hand: Hand = r === 'split' ? (n.midi >= MIDDLE_C ? 'R' : 'L') : r
-      notes.push({ pitch: n.midi, startBeat: n.ticks / ppq, durationBeats: lengthOf(n.durationTicks), hand })
+      const note: ChartNote = { pitch: n.midi, startBeat: n.ticks / ppq, durationBeats: lengthOf(n.durationTicks), hand: r === 'split' ? 'R' : r }
+      notes.push(note)
+      if (r === 'split') toSplit.push(note)
       if (notes.length > MAX_NOTES) throw new Error(tooMany())
     }
   })
   if (notes.length === 0) throw new Error(noNotes())
+  splitHands(toSplit.map((n) => ({ pitch: n.pitch, start: n.startBeat }))).forEach((hand, i) => (toSplit[i].hand = hand))
   notes.sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch)
 
   const [num, den] = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4]
   const beatsPerBar = Math.max(1, Math.round((num * 4) / (den || 4))) || 4
-  const lead = Math.floor(notes[0].startBeat / beatsPerBar) * beatsPerBar
+  // A file written half a beat late, starting on an off-beat with most notes struck on
+  // off-beats, is moved back onto the beat; a pickup or a syncopated tune is not.
+  const late = notes[0].startBeat - Math.floor(notes[0].startBeat) === 0.5 && offBeats(notes) >= LATE_SHARE
+  const lead = Math.floor(notes[0].startBeat / beatsPerBar) * beatsPerBar + (late ? 0.5 : 0)
   for (const n of notes) n.startBeat -= lead
   for (const n of backing) n.startBeat -= lead
   backing.sort((a, b) => a.startBeat - b.startBeat)
@@ -183,6 +190,20 @@ export function chartFromMidiJson(midi: MidiJson, title: string, roles?: Record<
     ...(heard.length ? { backing: heard } : {}),
   }
 }
+
+/** Of the notes struck on a beat or half way between two, the share struck half way. */
+function offBeats(notes: readonly ChartNote[]): number {
+  let on = 0
+  let off = 0
+  for (const n of notes) {
+    const part = n.startBeat - Math.floor(n.startBeat)
+    if (part === 0) on++
+    else if (part === 0.5) off++
+  }
+  return off / Math.max(1, on + off)
+}
+/** A file is taken as half a beat late when this share of its notes falls on off-beats. */
+const LATE_SHARE = 0.6
 
 /** Reads a .mid file chosen by the user. Rejects with a readable message. */
 export async function readMidiFile(file: File): Promise<{ midi: MidiJson; title: string }> {

@@ -80,11 +80,28 @@ describe('chartFromMidiJson', () => {
     ])
     expect(() => chartFromMidiJson(midi, 't', { 0: 'off', 1: 'off', 2: 'off' })).toThrow('No notes found')
   })
-  it('splits a single track (or three or more) at middle C', () => {
-    const one = chartFromMidiJson(file([[note(59, 0), note(60, 0)]]), 't')
-    expect(one.notes.map((n) => n.hand)).toEqual(['L', 'R'])
+  it('shares a single track (or three or more) out between the hands', () => {
+    // Bass then chord in the left hand, the tune above: the chord's C4 stays in the left hand.
+    const one = chartFromMidiJson(file([[note(53, 0), note(68, 0), note(56, 480), note(60, 480), note(67, 480), note(53, 960), note(65, 960)]]), 't')
+    expect(one.notes.map((n) => [n.pitch, n.hand])).toEqual([
+      [53, 'L'],
+      [68, 'R'],
+      [56, 'L'],
+      [60, 'L'],
+      [67, 'R'],
+      [53, 'L'],
+      [65, 'R'],
+    ])
     const three = chartFromMidiJson(file([[note(40, 0)], [note(70, 0)], [note(50, 480)]]), 't')
     expect(three.notes.map((n) => n.hand)).toEqual(['L', 'R', 'L'])
+  })
+  it('moves a file written half a beat late back onto the beat', () => {
+    // Bass and chords all on off-beats, the tune in eighths: every note is half a beat late.
+    const late = [0, 1, 2, 3].flatMap((b) => [note(b % 2 ? 56 : 53, 480 * b + 240), note(68, 480 * b + 240), note(67, 480 * b + 480)])
+    expect(chartFromMidiJson(file([late]), 't').notes.filter((n) => n.pitch !== 67).map((n) => n.startBeat)).toEqual([0, 0, 1, 1, 2, 2, 3, 3])
+    // A pickup before a tune on the beat stays where it is.
+    const pickup = [note(67, 240), note(60, 480), note(64, 960), note(67, 1440), note(72, 1920)]
+    expect(chartFromMidiJson(file([pickup]), 't').notes.map((n) => n.startBeat)).toEqual([0.5, 1, 2, 3, 4])
   })
   it('falls back to 120 bpm and 4/4 when the file says nothing', () => {
     const c = chartFromMidiJson(file([[note(60, 0)]], { tempos: [], timeSignatures: [] }), 't')

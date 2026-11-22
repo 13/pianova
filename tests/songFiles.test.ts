@@ -1,7 +1,8 @@
 import * as alphaTab from '@coderline/alphatab'
+import { Midi } from '@tonejs/midi'
 import { describe, expect, it } from 'vitest'
 import { chartFromMidiJson, describeTracks } from '../src/chart/midiImport'
-import { readSongFile } from '../src/songs/read'
+import { knownArtist, readSongFile, songName } from '../src/songs/read'
 
 /** A Guitar Pro 7 file written from alphaTex, as a songs-folder file would be. */
 function gp(tex: string): Uint8Array {
@@ -79,5 +80,29 @@ describe('readSongFile (Guitar Pro)', () => {
   it('rejects other files', () => {
     expect(() => readSongFile('notes.txt', new Uint8Array([1, 2, 3]))).toThrow()
     expect(() => readSongFile('broken.gp5', new Uint8Array([1, 2, 3]))).toThrow()
+  })
+})
+
+describe('MIDI file names', () => {
+  it('reads the title and artist from the file name', () => {
+    expect(songName('Mad World By_ Gary Jules')).toEqual({ title: 'Mad World', artist: 'Gary Jules' })
+    expect(songName('Queen - Bohemian Rhapsody')).toEqual({ title: 'Bohemian Rhapsody', artist: 'Queen' })
+    expect(songName('Stand By Me')).toEqual({ title: 'Stand By Me', artist: '' })
+    expect(songName('my_tune')).toEqual({ title: 'my tune', artist: '' })
+  })
+  it('leaves out download-site tags, dates and "midi" words', () => {
+    expect(songName('Gary-Jules-Mad-World-VisionMidis-20220731211542-nonstop2k.com')).toEqual({ title: 'Gary Jules Mad World', artist: '' })
+    expect(songName('midi')).toEqual({ title: 'midi', artist: '' })
+  })
+  it('takes the artist from another song in the folder when the title starts with it', () => {
+    expect(knownArtist({ title: 'Gary Jules Mad World', artist: '' }, ['Someone', 'Gary Jules'])).toEqual({ title: 'Mad World', artist: 'Gary Jules' })
+    expect(knownArtist({ title: 'Gary Jules', artist: '' }, ['Gary Jules'])).toEqual({ title: 'Gary Jules', artist: '' })
+    expect(knownArtist({ title: 'Mad World', artist: 'Tears for Fears' }, ['Gary Jules'])).toEqual({ title: 'Mad World', artist: 'Tears for Fears' })
+  })
+  it('names a MIDI file by its file name', () => {
+    const midi = new Midi()
+    midi.addTrack().addNote({ midi: 60, ticks: 0, durationTicks: 480 })
+    const song = readSongFile('Mad World By_ Gary Jules.mid', midi.toArray())
+    expect([song.title, song.artist]).toEqual(['Mad World', 'Gary Jules'])
   })
 })

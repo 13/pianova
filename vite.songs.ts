@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin, ViteDevServer } from 'vite'
-import { readSongFile, SONG_EXTENSIONS, type SongFile } from './src/songs/read.ts'
+import { knownArtist, readSongFile, SONG_EXTENSIONS, type SongFile } from './src/songs/read.ts'
 
 const LIST = 'virtual:songs'
 const ONE = 'virtual:songs/'
@@ -60,12 +60,14 @@ export function songsFolder(dir = 'songs'): Plugin {
     resolveId: (id) => (id === LIST || id.startsWith(ONE) ? '\0' + id : undefined),
     load(id) {
       if (id === '\0' + LIST) {
-        const entries = files().flatMap((file) => {
-          const song = read(file)
-          if (song instanceof Error) {
-            this.warn(`songs/${file} skipped: ${song.message}`)
+        const songs = files().map((file) => ({ file, song: read(file) }))
+        const artists = songs.flatMap(({ song }) => (song instanceof Error || !song.artist ? [] : [song.artist]))
+        const entries = songs.flatMap(({ file, song: read }) => {
+          if (read instanceof Error) {
+            this.warn(`songs/${file} skipped: ${read.message}`)
             return []
           }
+          const song = { ...read, ...knownArtist(read, artists) }
           const songId = idOf(file)
           const parts = song.midi.tracks.filter((t) => t.notes.length).map((t) => t.name || t.instrument?.name || '')
           return [
