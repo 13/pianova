@@ -141,9 +141,10 @@ export class PlayView implements View {
   private currentSection = -1
   private handGuide: HandGuide
   private handOverlay = new HandOverlay()
-  /** Stops redrawing a paused or finished song once nothing on screen moves. */
+  /** Stops redrawing a paused, finished or waiting song once nothing on screen moves. */
   private idle!: IdleGate
   private lastState = ''
+  private lastBeat = NaN
   /** The player's keys, for placing the hands. */
   private keyRange: { lo: number; hi: number }
   private anchor = (pitch: number) => this.highway.keyAnchor(pitch)
@@ -744,12 +745,15 @@ export class PlayView implements View {
     const { synth } = this.app
     const now = synth.now()
     session.update(now, synth.lead)
-    // While the song runs everything moves; paused or finished, draw only until it settles.
-    if (session.state !== this.lastState) {
+    // While the music moves so does everything else. Paused, finished, or holding on a note
+    // that "wait for me" is waiting for, draw only until the picture settles.
+    const moving = session.state === 'running' && session.beat !== this.lastBeat
+    this.lastBeat = session.beat
+    if (moving || session.state !== this.lastState) {
       this.lastState = session.state
       this.idle.wake()
     }
-    const draw = session.state === 'running' || this.idle.awake(this.app.input.held)
+    const draw = this.idle.awake(this.app.input.held)
 
     // Time spent playing (not listening, not paused) counts towards the daily goal.
     const tick = performance.now()

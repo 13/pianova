@@ -210,9 +210,11 @@ button.tl-panel:hover { border-color: rgba(179, 185, 255, 0.5); }
 .stage.view-both .sheet, .stage.view-sheet .sheet { display: block; }
 .sheet-canvas { width: 100%; height: 100%; display: block; }
 .stage-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Panels over the moving 3D stage are tinted, not frosted: a backdrop blur over a canvas
+   that changes every frame is redone every frame, about a sixth of the CPU on a big screen. */
 .panel {
   position: absolute; left: 22px; top: calc(var(--sheet-h, 0px) + 22px); min-width: 250px; padding: 14px 20px 8px; border-radius: 14px; z-index: 2;
-  background: rgba(16, 21, 50, 0.72); border: 1px solid rgba(150, 165, 255, 0.22); backdrop-filter: blur(10px);
+  background: rgba(16, 21, 50, 0.86); border: 1px solid rgba(150, 165, 255, 0.22);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column;
 }
 .panel-title { font-size: 0.82rem; font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase; color: #9aa6f5; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
@@ -224,7 +226,7 @@ button.tl-panel:hover { border-color: rgba(179, 185, 255, 0.5); }
 .feedback {
   position: absolute; right: 22px; top: calc(var(--sheet-h, 0px) + 24px); z-index: 2; display: inline-flex; align-items: center; gap: 12px; padding: 10px 20px 10px 16px;
   border-radius: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.92rem;
-  background: rgba(16, 40, 36, 0.82); border: 1.5px solid rgba(74, 222, 128, 0.6); color: #eafff2; backdrop-filter: blur(8px);
+  background: rgba(16, 40, 36, 0.9); border: 1.5px solid rgba(74, 222, 128, 0.6); color: #eafff2;
   box-shadow: 0 0 24px rgba(74, 222, 128, 0.18); animation: pop 0.14s ease-out;
 }
 .feedback .icon { font-size: 1.5rem; color: var(--green); }
@@ -235,7 +237,7 @@ button.tl-panel:hover { border-color: rgba(179, 185, 255, 0.5); }
 @keyframes pop { from { transform: scale(0.94); opacity: 0; } to { transform: none; opacity: 1; } }
 .chord-strip {
   position: absolute; left: 50%; top: calc(var(--sheet-h, 0px) + 18px); z-index: 2; width: min(46%, 560px); height: 44px; transform: translateX(-50%);
-  overflow: hidden; pointer-events: none; border-radius: 12px; background: rgba(16, 21, 50, 0.5); border: 1px solid rgba(150, 165, 255, 0.14); backdrop-filter: blur(6px);
+  overflow: hidden; pointer-events: none; border-radius: 12px; background: rgba(16, 21, 50, 0.7); border: 1px solid rgba(150, 165, 255, 0.14);
   -webkit-mask-image: linear-gradient(90deg, #000 80%, transparent); mask-image: linear-gradient(90deg, #000 80%, transparent);
 }
 .chord-track { position: absolute; left: 28%; top: 0; bottom: 0; will-change: transform; }
@@ -253,7 +255,7 @@ button.tl-panel:hover { border-color: rgba(179, 185, 255, 0.5); }
 .chord-now { position: absolute; left: 28%; top: 6px; bottom: 6px; width: 2px; margin-left: -1px; background: rgba(238, 240, 255, 0.7); border-radius: 1px; }
 .hand-guide {
   position: absolute; right: 22px; top: calc(var(--sheet-h, 0px) + 86px); z-index: 2; display: flex; gap: 6px; padding: 10px 12px 6px; border-radius: 14px; pointer-events: none;
-  background: rgba(16, 21, 50, 0.62); border: 1px solid rgba(150, 165, 255, 0.18); backdrop-filter: blur(8px);
+  background: rgba(16, 21, 50, 0.8); border: 1px solid rgba(150, 165, 255, 0.18);
 }
 .hand { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; transition: opacity 0.3s; }
 .hand[hidden] { display: none; }
@@ -339,7 +341,7 @@ span.chip.on { color: #eafff2; border-color: rgba(74, 222, 128, 0.7); background
 .banner-pop {
   position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 3; pointer-events: none; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 30px; border-radius: 16px;
-  background: rgba(14, 30, 30, 0.82); border: 1.5px solid rgba(74, 222, 128, 0.6); backdrop-filter: blur(8px);
+  background: rgba(14, 30, 30, 0.9); border: 1.5px solid rgba(74, 222, 128, 0.6);
   box-shadow: 0 0 40px rgba(74, 222, 128, 0.2); animation: rise-in 0.25s ease-out;
 }
 .banner-pop strong { font-size: 1.9rem; line-height: 1.1; letter-spacing: -0.01em; color: #eafff2; }
@@ -373,7 +375,7 @@ span.chip.on { color: #eafff2; border-color: rgba(74, 222, 128, 0.7); background
 .nav-legend {
   position: fixed; right: 16px; bottom: 14px; z-index: 30; display: flex; align-items: center; gap: 10px;
   padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(21, 26, 58, 0.92);
-  color: var(--muted); font-size: 0.78rem; backdrop-filter: blur(6px);
+  color: var(--muted); font-size: 0.78rem;
 }
 .nav-legend-title { font-weight: 700; color: var(--text); }
 .nav-key { display: inline-flex; align-items: center; gap: 5px; }
