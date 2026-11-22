@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
+import { songsFolder } from './vite.songs.ts'
 
 /**
  * A Content-Security-Policy for the built site. GitHub Pages cannot send headers, so it
@@ -57,5 +58,5 @@ export default defineConfig({
   // Relative asset paths, so the build works from any sub-path (e.g. GitHub Pages at /pianova/).
   base: './',
   server: { port: 5173, strictPort: false },
-  plugins: [csp()],
+  plugins: [csp(), songsFolder()],
 })

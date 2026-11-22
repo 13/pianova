@@ -1,6 +1,7 @@
 import { chartFromMidiJson, describeTracks, readMidiFile, type MidiJson, type TrackRole } from '../chart/midiImport'
 import type { Chart, Hand } from '../core/types'
 import { PIECES } from '../curriculum'
+import { FOLDER_SONGS, type FolderSong } from '../songs/library'
 import { starsFor } from '../judge/judge'
 import type { App } from './app'
 import { h, icon, percent, stars, type View } from './dom'
@@ -52,22 +53,27 @@ export function freePlayView(app: App): View {
         'div',
         { class: 'pieces' },
         PIECES.map((piece) => {
-          const best = app.progress.pieceResult(piece.id)
-          const mastered = app.progress.songMastery(piece.id)
           const info = { id: piece.id, title: tr(piece.title), composer: tr(piece.composer), chart: piece.chart, pieceId: piece.id }
-          return h(
-            'button',
-            { class: 'piece', onclick: () => app.show(songView(app, info, () => app.goFreePlay())) },
-            h('strong', null, tr(piece.title)),
-            h('span', { class: 'muted' }, tr(piece.composer)),
-            h(
-              'span',
-              { class: 'piece-score' },
-              stars(best?.stars ?? 0),
-              mastered !== undefined ? t(`${percent(mastered)} mastered`, `${percent(mastered)} gemeistert`) : best ? `${t('Best', 'Bestwert')} ${percent(best.best)}` : t('Not played yet', 'Noch nicht gespielt'),
-            ),
-          )
+          return pieceCard(app, piece.id, info.title, info.composer, () => app.show(songView(app, info, () => app.goFreePlay())))
         }),
+        FOLDER_SONGS.map((song) =>
+          pieceCard(
+            app,
+            song.id,
+            song.title,
+            song.artist || t('Songs folder', 'Lieder-Ordner'),
+            async () => {
+              try {
+                error.hidden = true
+                app.show(await folderSongView(app, song, () => app.goFreePlay()))
+              } catch (err) {
+                error.textContent = t(`Could not open "${song.file}"`, `„${song.file}“ ließ sich nicht öffnen`) + `: ${err instanceof Error ? err.message : t('unknown error', 'unbekannter Fehler')}.`
+                error.hidden = false
+              }
+            },
+            `songs/${song.file} · ${song.parts.join(', ')}`,
+          ),
+        ),
         h(
           'button',
           { class: 'piece import', onclick: () => app.show(jamView(app)) },
@@ -86,6 +92,30 @@ export function freePlayView(app: App): View {
     ),
   )
   return { el }
+}
+
+/** A song to pick, with its stars and how much of it is mastered. */
+function pieceCard(app: App, id: string, title: string, composer: string, onclick: () => void, tooltip?: string): HTMLElement {
+  const best = app.progress.pieceResult(id)
+  const mastered = app.progress.songMastery(id)
+  return h(
+    'button',
+    { class: 'piece', title: tooltip, onclick },
+    h('strong', null, title),
+    h('span', { class: 'muted' }, composer),
+    h(
+      'span',
+      { class: 'piece-score' },
+      stars(best?.stars ?? 0),
+      mastered !== undefined ? t(`${percent(mastered)} mastered`, `${percent(mastered)} gemeistert`) : best ? `${t('Best', 'Bestwert')} ${percent(best.best)}` : t('Not played yet', 'Noch nicht gespielt'),
+    ),
+  )
+}
+
+/** A song from the songs folder, loaded, as a song lesson that keeps its stars and levels. */
+export async function folderSongView(app: App, song: FolderSong, back: () => void): Promise<View> {
+  const chart = await song.chart()
+  return songView(app, { id: song.id, title: song.title, composer: song.artist, chart, pieceId: song.id }, back)
 }
 
 const roleNames = (): Record<TrackRole, string> => ({

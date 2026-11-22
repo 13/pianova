@@ -11,7 +11,8 @@ import { loadKeyboardLayout } from '../input/keyboard'
 import { ProgressStore, type KV } from '../progress/store'
 import { h, icon, type View } from './dom'
 import { weakNotes, weakSpotChart } from '../practice/weakSpots'
-import { freePlayView, playChart } from './freeplay'
+import { folderSongView, freePlayView, playChart } from './freeplay'
+import { FOLDER_SONGS } from '../songs/library'
 import { LessonView } from './lesson'
 import { Navigator } from './nav'
 import { pathView } from './path'
@@ -97,7 +98,12 @@ export class App {
   /** A built-in song's page, opened from home. */
   goSong(pieceId: string): void {
     const piece = PIECES.find((p) => p.id === pieceId)
-    if (!piece) return
+    if (!piece) {
+      const song = FOLDER_SONGS.find((s) => s.id === pieceId)
+      // A song that fails to load opens the song list, which says why when picked there.
+      if (song) folderSongView(this, song, () => this.goPath()).then((view) => this.show(view), () => this.goFreePlay())
+      return
+    }
     this.show(
       songView(this, { id: piece.id, title: tr(piece.title), composer: tr(piece.composer), chart: piece.chart, pieceId: piece.id }, () => this.goPath()),
     )

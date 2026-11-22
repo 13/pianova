@@ -1,4 +1,5 @@
 import { LESSONS, PIECES, UNITS } from '../curriculum'
+import { FOLDER_SONGS } from '../songs/library'
 import type { MidiStatus } from '../input/hub'
 import { weakNotes } from '../practice/weakSpots'
 import type { App } from './app'
@@ -170,7 +171,7 @@ function todayCard(app: App): HTMLElement {
     )
   })
   const last = app.progress.lastSong
-  const piece = last ? PIECES.find((p) => p.id === last) : undefined
+  const piece = last ? (PIECES.find((p) => p.id === last) ?? FOLDER_SONGS.find((s) => s.id === last)) : undefined
   return h(
     'section',
     { class: 'today-card' },

@@ -41,6 +41,16 @@ describe('chartFromMidiJson', () => {
     // Even when asked to, drums are not given to a hand.
     expect(chartFromMidiJson(midi, 't', { 0: 'R', 1: 'L', 2: 'off' }).notes.map((n) => n.pitch)).toEqual([60])
   })
+  it('gives two piano parts to the two hands, by their names when they say which', () => {
+    const midi = file([[note(48, 0)], [note(72, 0)], [note(67, 0)]])
+    midi.tracks[0] = { ...midi.tracks[0], name: 'LH', instrument: { name: 'acoustic grand piano', family: 'piano' } }
+    midi.tracks[1] = { ...midi.tracks[1], name: 'Piano RH', instrument: { name: 'acoustic grand piano', family: 'piano' } }
+    midi.tracks[2] = { ...midi.tracks[2], name: 'Vocals', instrument: { name: 'flute', family: 'pipe' } }
+    expect(describeTracks(midi).map((t) => t.role)).toEqual(['L', 'R', 'band'])
+    midi.tracks[0].name = 'Piano 1'
+    midi.tracks[1].name = 'Piano 2'
+    expect(describeTracks(midi).map((t) => t.role)).toEqual(['R', 'L', 'band'])
+  })
   it('in a band arrangement, gives you the piano and lets the band play along', () => {
     const midi = file([[note(72, 0)], [note(40, 0)], [{ ...note(64, 0), velocity: 0.4 }]])
     midi.tracks[0].instrument = { name: 'acoustic grand piano', family: 'piano' }

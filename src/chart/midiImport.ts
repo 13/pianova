@@ -71,15 +71,23 @@ export function describeTracks(midi: MidiJson): TrackInfo[] {
     })
     .filter((t) => t.notes > 0)
   const tonal = tracks.filter((t) => !t.percussion)
-  if (tonal.length === 2) {
-    tonal[0].role = 'R'
-    tonal[1].role = 'L'
-  } else {
-    // Without instrument info every track counts as piano.
-    const piano = tonal.filter((t) => !t.family || t.family === 'piano')
-    for (const t of piano.length ? piano : tonal) t.role = 'split'
-  }
+  // Without instrument info every track counts as piano.
+  const piano = tonal.filter((t) => !t.family || t.family === 'piano')
+  if (tonal.length === 2) handsFor(tonal)
+  else if (piano.length === 2) handsFor(piano)
+  else for (const t of piano.length ? piano : tonal) t.role = 'split'
   return tracks.map(({ family: _family, ...t }) => t)
+}
+
+const LEFT_NAME = /\b(left|links|lh|l\.?\s*h\.?|bass)\b/i
+const RIGHT_NAME = /\b(right|rechts|rh|r\.?\s*h\.?)\b/i
+
+/** Gives two tracks to the two hands: first right, second left, unless their names say otherwise. */
+function handsFor(pair: { name: string; role: TrackRole }[]): void {
+  const [a, b] = pair
+  const swap = (LEFT_NAME.test(a.name) && !LEFT_NAME.test(b.name)) || (RIGHT_NAME.test(b.name) && !RIGHT_NAME.test(a.name))
+  a.role = swap ? 'L' : 'R'
+  b.role = swap ? 'R' : 'L'
 }
 
 /** The sound a General MIDI instrument family is played with along with you. */
