@@ -107,9 +107,11 @@ export function measureView(app: App, back: () => void): View {
   const main = h('main', { class: 'path narrow measure listening' }, noDevice, title, lead, note, strip, hint, actions)
 
   const renderDevice = () => {
-    const { inputs, error, supported } = app.input.status
+    const { inputs, error, supported, insecure } = app.input.status
     noDevice.hidden = inputs.length > 0
-    noDevice.textContent = !supported
+    noDevice.textContent = insecure
+      ? t('MIDI keyboards only work on a secure page. Open Pianova over https, or at localhost on this computer.', 'MIDI-Keyboards funktionieren nur auf einer sicheren Seite. Öffne Pianova über https oder unter localhost auf diesem Computer.')
+      : !supported
       ? t('This browser cannot talk to MIDI keyboards. Open Pianova in Chrome or Chromium.', 'Dieser Browser kann nicht mit MIDI-Keyboards sprechen. Öffne Pianova in Chrome oder Chromium.')
       : error
         ? t('MIDI access was blocked. Allow MIDI for this page in the address bar, then reload.', 'Der MIDI-Zugriff wurde blockiert. Erlaube MIDI für diese Seite in der Adressleiste und lade neu.')

@@ -3,6 +3,11 @@ import type { NoteCallback } from './keyboard'
 export interface MidiStatus {
   /** False when the browser has no Web MIDI at all. */
   supported: boolean
+  /**
+   * True when Web MIDI is missing only because the page is not a secure context
+   * (plain http on anything but localhost): browsers that support MIDI hide it there.
+   */
+  insecure: boolean
   inputs: { id: string; name: string }[]
   /** The one device being listened to, or null for all of them. */
   activeId: string | null
@@ -10,9 +15,14 @@ export interface MidiStatus {
   error?: string
 }
 
+function midiSupport(): MidiStatus {
+  const supported = 'requestMIDIAccess' in navigator
+  return { supported, insecure: !supported && globalThis.isSecureContext === false, inputs: [], activeId: null }
+}
+
 /** Listens to MIDI keyboards: note on/off and the sustain pedal. Hot-plug aware. */
 export class MidiInput {
-  status: MidiStatus = { supported: 'requestMIDIAccess' in navigator, inputs: [], activeId: null }
+  status: MidiStatus = midiSupport()
   private access: MIDIAccess | null = null
   /** The device the user asked for; ignored while it is not connected. */
   private wantedId: string | null = null
@@ -27,6 +37,8 @@ export class MidiInput {
 
   async init(preferredId: string | null): Promise<void> {
     this.wantedId = preferredId
+    // Already granted: asking again would only repeat the browser's prompt.
+    if (this.access) return this.refresh()
     if (!this.status.supported) {
       this.onStatus(this.status)
       return

@@ -30,7 +30,9 @@ export function settingsView(app: App): View {
     )
     // Show what is actually being listened to, not just what was last chosen.
     device.value = s.activeId ?? ''
-    deviceNote.textContent = !s.supported
+    deviceNote.textContent = s.insecure
+      ? t('MIDI only works on a secure page. Open Pianova over https, or at localhost on this computer.', 'MIDI funktioniert nur auf einer sicheren Seite. Öffne Pianova über https oder unter localhost auf diesem Computer.')
+      : !s.supported
       ? t('This browser has no MIDI support. Use Chrome or Chromium to connect a keyboard.', 'Dieser Browser unterstützt kein MIDI. Nutze Chrome oder Chromium, um ein Keyboard anzuschließen.')
       : s.error
         ? t('MIDI access is blocked for this page. Allow it in the address bar and reload.', 'MIDI ist für diese Seite blockiert. Erlaube es in der Adressleiste und lade neu.')
@@ -202,7 +204,7 @@ export function settingsView(app: App): View {
     [t('Commit', 'Commit'), __COMMIT__],
     [t('Graphics', 'Grafik'), drawsIn3D() ? '3D (WebGL)' : t('2D (no WebGL)', '2D (ohne WebGL)')],
     [t('Sound', 'Ton'), `${(synth.ctx.sampleRate / 1000).toLocaleString(getLang())} kHz`],
-    [t('MIDI', 'MIDI'), input.status.supported ? t('Supported', 'Unterstützt') : t('Not supported in this browser', 'In diesem Browser nicht unterstützt')],
+    [t('MIDI', 'MIDI'), input.status.supported ? t('Supported', 'Unterstützt') : input.status.insecure ? t('Needs https or localhost', 'Braucht https oder localhost') : t('Not supported in this browser', 'In diesem Browser nicht unterstützt')],
     [t('Browser', 'Browser'), navigator.userAgent],
   ]
   const copyNote = h('span', { class: 'muted', role: 'status' })

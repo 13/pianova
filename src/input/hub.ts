@@ -12,7 +12,7 @@ export type HubNoteCallback = (pitch: number, on: boolean, perfTime: number, vel
 export class InputHub {
   /** Pitches currently held down. */
   readonly held = new Set<number>()
-  status: MidiStatus = { supported: true, inputs: [], activeId: null }
+  status: MidiStatus = { supported: true, insecure: false, inputs: [], activeId: null }
   private noteListeners = new Set<HubNoteCallback>()
   private statusListeners = new Set<(s: MidiStatus) => void>()
   private sustainListeners = new Set<(down: boolean) => void>()
@@ -56,7 +56,11 @@ export class InputHub {
     this.status = this.midi.status
   }
 
+  /** True once MIDI access has been asked for (whatever the answer). */
+  midiAsked = false
+
   init(preferredId: string | null): Promise<void> {
+    this.midiAsked = true
     return this.midi.init(preferredId)
   }
 

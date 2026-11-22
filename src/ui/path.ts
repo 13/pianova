@@ -29,7 +29,9 @@ export function pathView(app: App): View {
     const name = s.inputs.length === 1 ? s.inputs[0].name : t(`${s.inputs.length} MIDI devices`, `${s.inputs.length} MIDI-Geräte`)
     pill.textContent = s.inputs.length ? name : t('Computer keys', 'Computertasten')
     pill.className = s.inputs.length ? 'pill ok' : 'pill'
-    const problem = !s.supported
+    const problem = s.insecure
+      ? t('MIDI keyboards only work on a secure page. Open Pianova over https, or at localhost on this computer. Your computer keys still work.', 'MIDI-Keyboards funktionieren nur auf einer sicheren Seite. Öffne Pianova über https oder unter localhost auf diesem Computer. Deine Computertasten funktionieren trotzdem.')
+      : !s.supported
       ? t('This browser cannot talk to MIDI keyboards. Open Pianova in Chrome or Chromium to use one. Your computer keys still work.', 'Dieser Browser kann nicht mit MIDI-Keyboards sprechen. Öffne Pianova in Chrome oder Chromium, um eines zu nutzen. Deine Computertasten funktionieren trotzdem.')
       : s.error
         ? t('MIDI access was blocked, so your keyboard cannot be heard. Allow MIDI for this page in the address bar, then reload. Your computer keys still work.', 'Der MIDI-Zugriff wurde blockiert, daher ist dein Keyboard nicht zu hören. Erlaube MIDI für diese Seite in der Adressleiste und lade neu. Deine Computertasten funktionieren trotzdem.')

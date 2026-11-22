@@ -94,3 +94,25 @@ describe('MidiInput', () => {
     expect(t.sustain).toEqual([true, false])
   })
 })
+
+describe('MidiInput support', () => {
+  const make = () => new MidiInput(() => {}, () => {}, () => {})
+
+  it('blames an insecure page, not the browser, when MIDI is hidden by http', () => {
+    vi.stubGlobal('navigator', {})
+    vi.stubGlobal('isSecureContext', false)
+    expect(make().status).toMatchObject({ supported: false, insecure: true })
+  })
+
+  it('blames the browser when the page is secure but MIDI is missing', () => {
+    vi.stubGlobal('navigator', {})
+    vi.stubGlobal('isSecureContext', true)
+    expect(make().status).toMatchObject({ supported: false, insecure: false })
+  })
+
+  it('is not insecure when MIDI is there', () => {
+    vi.stubGlobal('navigator', { requestMIDIAccess: async () => ({}) })
+    vi.stubGlobal('isSecureContext', false)
+    expect(make().status).toMatchObject({ supported: true, insecure: false })
+  })
+})

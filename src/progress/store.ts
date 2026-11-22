@@ -26,6 +26,8 @@ export interface Settings {
   handOverlay: boolean
   /** Show the song's chord names on the highway and over the staff. */
   chordNames: boolean
+  /** The first-start setup (MIDI access, which piano) has been gone through. */
+  setupDone: boolean
 }
 
 /** Where you are with one song: a level and a best share of notes played right, per part. */
@@ -66,7 +68,7 @@ export const BACKUP_KEY = 'pianova.backup'
  */
 const VERSION = 2
 const MAX_STATS = 5000
-const DEFAULT_SETTINGS: Settings = { latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null, handOverlay: true, chordNames: true }
+const DEFAULT_SETTINGS: Settings = { latencyMs: 0, volume: 0.8, labels: true, midiInputId: null, keyboard: 'auto', soundKeys: 'auto', language: 'auto', view: 'highway', dailyGoalMin: 10, mix: { accomp: 0.8, band: 0.7, click: 0.8 }, measuredKeys: null, handOverlay: true, chordNames: true, setupDone: false }
 
 interface Blob {
   version: number
@@ -133,6 +135,7 @@ function readSettings(v: unknown): Settings {
     measuredKeys: validRange(v.measuredKeys) ? { lo: v.measuredKeys.lo, hi: v.measuredKeys.hi } : null,
     handOverlay: typeof v.handOverlay === 'boolean' ? v.handOverlay : d.handOverlay,
     chordNames: typeof v.chordNames === 'boolean' ? v.chordNames : d.chordNames,
+    setupDone: typeof v.setupDone === 'boolean' ? v.setupDone : d.setupDone,
   }
 }
 

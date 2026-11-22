@@ -16,6 +16,7 @@ import { LessonView } from './lesson'
 import { Navigator } from './nav'
 import { pathView } from './path'
 import { measureView } from './measure'
+import { setupView } from './setup'
 import { settingsView } from './settings'
 import { skillCheckView } from './skillCheck'
 import { noteName, resolveLang, setLang, t, tr } from '../i18n'
@@ -111,6 +112,11 @@ export class App {
     this.show(settingsView(this))
   }
 
+  /** First start: allow MIDI, then say which piano. `done` continues to the app. */
+  goSetup(done: () => void): void {
+    this.show(setupView(this, done))
+  }
+
   /** Press the lowest and highest key, so Pianova knows the keyboard's size. */
   goMeasure(back: () => void = () => this.goSettings()): void {
     this.show(measureView(this, back))
@@ -187,10 +193,18 @@ export class App {
         document.addEventListener('pointerdown', retry, { once: true })
         document.addEventListener('keydown', retry, { once: true })
       }
-      void this.input.init(this.progress.settings.midiInputId)
       void loadKeyboardLayout()
-      if (this.progress.skill === null) this.goSkillCheck()
-      else this.goPath()
+      const next = () => (this.progress.skill === null ? this.goSkillCheck() : this.goPath())
+      // Someone who has used Pianova before (skill check taken) is not new: no setup for them.
+      if (!this.progress.settings.setupDone && this.progress.skill === null) {
+        this.goSetup(() => {
+          this.progress.setSettings({ setupDone: true })
+          next()
+        })
+        return
+      }
+      void this.input.init(this.progress.settings.midiInputId)
+      next()
     }
     return {
       el: h(
