@@ -1,4 +1,6 @@
 import { chartFromMidiJson, describeTracks, readMidiFile, type MidiJson, type TrackRole } from '../chart/midiImport'
+import { arrange, MAX_LEVEL, noteTiers } from '../chart/difficulty'
+import { songSections } from '../chart/sections'
 import type { Chart, Hand } from '../core/types'
 import { PIECES } from '../curriculum'
 import { FOLDER_SONGS, type FolderSong } from '../songs/library'
@@ -212,23 +214,30 @@ export function playChart(app: App, chart: Chart, o: PlayChartOptions): View {
     body.replaceChildren(view.el)
   }
 
-  // "Play again" keeps the tempo, hands, loop and wait settings of the run before.
-  const start = (practice?: Practice) =>
-    mount(
-      new PlayView(app, {
-        chart,
-        title: o.title,
-        hands: o.hands,
-        band: o.band,
-        practice,
-        mode: 'timed',
-        tools: true,
-        scored: true,
-        label: o.label,
-        onExit: o.back,
-        onFinish: finish,
-      }),
-    )
+  // Difficulty: every part at one level; the notes left out are played for you.
+  const sections = songSections(chart)
+  const tiers = noteTiers(chart)
+  const atLevel = (level: number) => (level >= MAX_LEVEL ? chart : arrange(chart, sections, sections.map(() => level), tiers).chart)
+
+  // "Play again" keeps the speed, level, hands, loop and wait settings of the run before.
+  const start = (practice?: Practice) => {
+    const view: PlayView = new PlayView(app, {
+      chart: atLevel(practice?.level ?? MAX_LEVEL),
+      sections,
+      difficulty: { level: MAX_LEVEL, onChange: (level) => view.reconfigure({ chart: atLevel(level) }) },
+      title: o.title,
+      hands: o.hands,
+      band: o.band,
+      practice,
+      mode: 'timed',
+      tools: true,
+      scored: true,
+      label: o.label,
+      onExit: o.back,
+      onFinish: finish,
+    })
+    mount(view)
+  }
 
   const finish = (result: PlayResult) => {
     const earned = starsFor(result.summary.accuracy)
@@ -248,7 +257,7 @@ export function playChart(app: App, chart: Chart, o: PlayChartOptions): View {
             ? undefined
             : pieceId === null
               ? o.unsaved
-              : t('Practice run. Play both hands at full tempo, without Wait or Loop, to save a score.', 'Übungsdurchgang. Spiel beide Hände im vollen Tempo, ohne Warten oder Schleife, um ein Ergebnis zu speichern.'),
+              : t('Practice run. Play both hands at full speed and level 5, without Wait or Loop, to save a score.', 'Übungsdurchgang. Spiel beide Hände im vollen Tempo auf Stufe 5, ohne Warten oder Schleife, um ein Ergebnis zu speichern.'),
           actions: [
             { label: t('Play again', 'Nochmal spielen'), primary: true, onclick: () => start(result.practice) },
             { label: o.another, onclick: o.back },

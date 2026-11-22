@@ -364,6 +364,21 @@ class SongLessonView implements View {
       tools: false,
       scored: true,
       label: `${t('Learn', 'Lernen')} • ${t('Part', 'Teil')} ${name}`,
+      // Picking a speed or level by hand: the trainer carries on from there.
+      onTempo: (tempo) => {
+        drill = { ...drill, tempo, rough: 0 }
+        view.setStatus(status())
+      },
+      difficulty: {
+        level: drill.level,
+        onChange: (level) => {
+          drill = { ...drill, level, rough: 0 }
+          song.setLevel(name, level)
+          song.save()
+          view.reconfigure({ chart: song.arranged(), sectionLevels: [...song.progress.levels] })
+          view.setStatus(status())
+        },
+      },
       onSkip: next,
       onExit: this.home,
       onFinish: () => undefined,
@@ -401,7 +416,7 @@ class SongLessonView implements View {
         break
       case 'level-up':
         view.banner(`${t('Level', 'Stufe')} ${drill.level}`, drill.level === MAX_LEVEL ? t('The full arrangement: every note', 'Der volle Satz: jede Note') : t('More notes coming in', 'Mehr Noten kommen dazu'), 'gold')
-        view.reconfigure({ chart: this.song.arranged(), tempo: drill.tempo, sectionLevels: [...this.song.progress.levels] })
+        view.reconfigure({ chart: this.song.arranged(), tempo: drill.tempo, level: drill.level, sectionLevels: [...this.song.progress.levels] })
         break
       case 'learned':
         view.banner(t(`Part ${name} learned`, `Teil ${name} gelernt`), `${t('Full speed, every note', 'Volles Tempo, jede Note')}: ${percent(accuracy)}`, 'gold')
@@ -412,7 +427,7 @@ class SongLessonView implements View {
         break
       case 'level-down':
         view.banner(t(`Back to level ${drill.level}`, `Zurück auf Stufe ${drill.level}`), t('Fewer notes for now; they come back as it gets cleaner', 'Vorerst weniger Noten; sie kommen zurück, wenn es sauberer wird'), 'warn')
-        view.reconfigure({ chart: this.song.arranged(), tempo: drill.tempo, sectionLevels: [...this.song.progress.levels] })
+        view.reconfigure({ chart: this.song.arranged(), tempo: drill.tempo, level: drill.level, sectionLevels: [...this.song.progress.levels] })
         break
       default:
         break
@@ -456,10 +471,11 @@ class SongLessonView implements View {
 
   private perform(): void {
     const { song } = this
-    const levels = [...song.progress.levels]
-    const full = levels.every((l) => l >= MAX_LEVEL)
-    const chart = song.arranged()
-    const view = new PlayView(this.app, {
+    let levels = [...song.progress.levels]
+    let full = levels.every((l) => l >= MAX_LEVEL)
+    let chart = song.arranged()
+    const status = () => song.parts.map((p) => `${p} ${levels[song.first(p)]}/${MAX_LEVEL}`).join(' · ')
+    const view: PlayView = new PlayView(this.app, {
       chart,
       sections: song.sections,
       sectionLevels: [...song.progress.levels],
@@ -471,9 +487,20 @@ class SongLessonView implements View {
       scored: true,
       label: full ? t('Perform • the full arrangement', 'Vorspielen • der volle Satz') : t('Perform • each part at its level', 'Vorspielen • jeder Teil auf seiner Stufe'),
       onExit: this.home,
-      onFinish: (result) => this.finish(result, chart, levels, full),
+      // One level for every part, for this run; how it goes moves the saved levels as usual.
+      difficulty: {
+        level: levels.every((l) => l === levels[0]) ? levels[0] : null,
+        onChange: (level) => {
+          levels = levels.map(() => level)
+          full = level >= MAX_LEVEL
+          chart = arrange(song.chart, song.sections, levels, song.tiers).chart
+          view.reconfigure({ chart, sectionLevels: [...levels] })
+          view.setStatus(status())
+        },
+      },
+      onFinish: (result) => this.finish(result, chart, levels, full && result.practice.tempo >= 1),
     })
-    view.setStatus(song.parts.map((p) => `${p} ${song.level(p)}/${MAX_LEVEL}`).join(' · '))
+    view.setStatus(status())
     this.mount(view, 'perform')
   }
 
@@ -512,7 +539,7 @@ class SongLessonView implements View {
     const note = [
       `${t('Mastery', 'Beherrschung')} ${percent(song.mastery)}${gained > 0 ? ` (+${gained})` : ''}.`,
       changes.length ? `${changes.join(', ')}.` : t('Levels stay as they are.', 'Die Stufen bleiben, wie sie sind.'),
-      full ? '' : t('Stars come with the full arrangement, every part at level 5.', 'Sterne gibt es mit dem vollen Satz, jeder Teil auf Stufe 5.'),
+      full ? '' : t('Stars come with the full arrangement at full speed, every part at level 5.', 'Sterne gibt es mit dem vollen Satz im vollen Tempo, jeder Teil auf Stufe 5.'),
     ]
       .filter(Boolean)
       .join(' ')

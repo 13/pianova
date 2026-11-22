@@ -6,6 +6,7 @@ import type { Chart, Hand } from '../core/types'
 import type { Grade, Summary } from '../judge/judge'
 import type { StatEvent } from '../progress/store'
 import { bandFor, type BandEvent } from '../audio/band'
+import { MAX_LEVEL } from '../chart/difficulty'
 import { Highway } from '../render/highway'
 import { SheetView } from '../render/staff'
 import { Session, type Mode } from '../session/session'
@@ -21,6 +22,8 @@ export interface Practice {
   hands: Hand[]
   tempo: number
   loop: { fromBar: number; toBar: number } | null
+  /** Difficulty level, when the screen offers one (1 = simplest, MAX_LEVEL = every note). */
+  level?: number
 }
 
 export interface PlayConfig {
@@ -31,8 +34,15 @@ export interface PlayConfig {
   tempoScale?: number
   /** Tool settings from an earlier run of the same chart, to pick up where it left off. */
   practice?: Practice
-  /** Show the practice tools (tempo, wait, hands, loop). */
+  /** Show the practice tools (wait, hands, loop). Speed can always be changed. */
   tools: boolean
+  /** Called when the player picks another speed during play. */
+  onTempo?: (tempo: number) => void
+  /**
+   * Offer a difficulty picker during play. `level` null means each part has its own level.
+   * The caller swaps in the matching chart with `reconfigure`.
+   */
+  difficulty?: { level: number | null; onChange(level: number): void }
   /** Click the beat during a demo (for music that will be played in time). */
   metronome?: boolean
   /** Show the practice panel (accuracy, streak) and timing feedback. */
@@ -74,7 +84,7 @@ export interface PlayResult {
 
 const FINISH_DELAY_MS = 700
 const FEEDBACK_MS = 1100
-const TEMPOS = [50, 60, 70, 75, 80, 90, 100]
+const TEMPOS = [50, 60, 70, 75, 80, 90, 100, 110, 125]
 /** Auto-played notes: demos at a normal touch, the other hand quieter so yours stands out. */
 const DEMO_VELOCITY = 0.6
 const ACCOMPANY_VELOCITY = 0.4
@@ -104,6 +114,9 @@ export class PlayView implements View {
   private hands: Hand[]
   private tempo: number
   private loop: { fromBar: number; toBar: number } | null = null
+  private level: number | null
+  private tempoEl: HTMLSelectElement | null = null
+  private levelEl: HTMLSelectElement | null = null
 
   private readonly chartHands: Hand[]
   private readonly bars: number
@@ -177,6 +190,7 @@ export class PlayView implements View {
     this.hands = cfg.practice?.hands ?? cfg.hands ?? this.chartHands
     this.tempo = cfg.practice?.tempo ?? cfg.tempoScale ?? 1
     this.loop = cfg.practice?.loop ?? null
+    this.level = cfg.difficulty ? (cfg.practice?.level ?? cfg.difficulty.level) : null
     this.hadDevice = app.input.status.inputs.length > 0
     this.handGuide = new HandGuide(this.chartHands)
     const { lo, hi } = app.keyboard
@@ -297,7 +311,7 @@ export class PlayView implements View {
 
   /** The current tool settings. */
   get practice(): Practice {
-    return { mode: this.mode, hands: [...this.hands], tempo: this.tempo, loop: this.loop && { ...this.loop } }
+    return { mode: this.mode, hands: [...this.hands], tempo: this.tempo, loop: this.loop && { ...this.loop }, ...(this.level !== null ? { level: this.level } : {}) }
   }
 
   /** (Re)starts the chart with the current practice settings. */
@@ -534,7 +548,11 @@ export class PlayView implements View {
 
   private finish(): void {
     const full =
-      this.mode === 'timed' && this.tempo === 1 && !this.loop && this.chartHands.every((hand) => this.hands.includes(hand))
+      this.mode === 'timed' &&
+      this.tempo >= 1 &&
+      !this.loop &&
+      (this.level === null || this.level >= MAX_LEVEL) &&
+      this.chartHands.every((hand) => this.hands.includes(hand))
     this.cfg.onFinish({
       summary: this.session.summary(),
       events: this.events,
@@ -550,7 +568,7 @@ export class PlayView implements View {
    * Swaps in another version of the chart (more or fewer notes) or a new tempo, and starts
    * again from the top of the loop. The 3D scene stays, so it is quick enough between passes.
    */
-  reconfigure(patch: { chart?: Chart; tempo?: number; sectionLevels?: number[] }): void {
+  reconfigure(patch: { chart?: Chart; tempo?: number; level?: number; sectionLevels?: number[] }): void {
     if (patch.sectionLevels) this.showLevels(patch.sectionLevels)
     if (patch.chart) {
       this.cfg = { ...this.cfg, chart: this.app.prepare(patch.chart) }
@@ -561,7 +579,14 @@ export class PlayView implements View {
       if (this.cfg.band) this.chords = chordMarks(this.cfg.chart)
       this.chordStrip.set(this.chords)
     }
-    if (patch.tempo !== undefined) this.tempo = patch.tempo
+    if (patch.tempo !== undefined) {
+      this.tempo = patch.tempo
+      if (this.tempoEl) this.fillTempos(this.tempoEl)
+    }
+    if (patch.level !== undefined) {
+      this.level = patch.level
+      if (this.levelEl) this.levelEl.value = String(patch.level)
+    }
     this.restart()
   }
 
@@ -843,6 +868,13 @@ export class PlayView implements View {
     }
   }
 
+  /** The speed choices, always including the current speed, with it selected. */
+  private fillTempos(select: HTMLSelectElement): void {
+    const now = Math.round(this.tempo * 100)
+    const all = [...new Set([...TEMPOS, now])].sort((a, b) => a - b)
+    select.replaceChildren(...all.map((n) => h('option', { value: String(n), selected: n === now }, `${t('Speed', 'Tempo')} ${percent(n / 100)}`)))
+  }
+
   // ---- transport bar --------------------------------------------------------
 
   private transport(): HTMLElement {
@@ -855,19 +887,43 @@ export class PlayView implements View {
       this.clockEl,
     ]
 
-    if (cfg.tools) {
-      const tempo = h(
+    // Speed, and the difficulty where there is one, can be changed at any time.
+    const tempo = (this.tempoEl = h('select', {
+      class: 'chip',
+      'aria-label': t('Speed', 'Tempo'),
+      title: t('How fast the music plays', 'Wie schnell die Musik spielt'),
+      onchange: () => {
+        this.tempo = Number(tempo.value) / 100
+        cfg.onTempo?.(this.tempo)
+        apply()
+      },
+    }))
+    this.fillTempos(tempo)
+    controls.push(h('span', { class: 'divider' }), tempo)
+
+    if (cfg.difficulty) {
+      const { onChange } = cfg.difficulty
+      const level = (this.levelEl = h(
         'select',
         {
           class: 'chip',
-          'aria-label': t('Tempo', 'Tempo'),
+          'aria-label': t('Difficulty', 'Schwierigkeit'),
+          title: t('Fewer notes to play at lower levels; the rest are played for you', 'Weniger Noten auf niedrigeren Stufen; den Rest spielt die Musik für dich'),
           onchange: () => {
-            this.tempo = Number(tempo.value) / 100
-            apply()
+            if (!level.value) return
+            this.level = Number(level.value)
+            onChange(this.level)
           },
         },
-        TEMPOS.map((n) => h('option', { value: String(n), selected: n === Math.round(this.tempo * 100) }, `Tempo ${percent(n / 100)}`)),
-      )
+        this.level === null && h('option', { value: '', selected: true, disabled: true }, t('Level: each part', 'Stufe: je Teil')),
+        Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((n) =>
+          h('option', { value: String(n), selected: n === this.level }, n === MAX_LEVEL ? t(`Level ${n} · every note`, `Stufe ${n} · alle Noten`) : t(`Level ${n}`, `Stufe ${n}`)),
+        ),
+      ))
+      controls.push(level)
+    }
+
+    if (cfg.tools) {
 
       const barInput = (value: number, label: string) =>
         h('input', { type: 'number', min: '1', max: String(this.bars), value: String(value), class: 'bar-input', 'aria-label': label, onchange: () => setLoop() })
@@ -937,7 +993,7 @@ export class PlayView implements View {
         t('Wait for me', 'Warte auf mich'),
       )
 
-      controls.push(h('span', { class: 'divider' }), tempo, loop, range, this.chartHands.length > 1 && hands, wait)
+      controls.push(loop, range, this.chartHands.length > 1 && hands, wait)
     }
 
     const view = h(
